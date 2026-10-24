@@ -1,0 +1,106 @@
+/// A package's identity: the lowercased last path component of its location, minus `.git`.
+///
+/// Matches SwiftPM's `PackageIdentity(urlString:)` / `computeDefaultName(fromLocation:)`.
+public struct PackageIdentity: Sendable, Hashable, Comparable, CustomStringConvertible {
+    public let description: String
+
+    private static let pathSeparator: Character = "/"
+    private static let gitSuffix = ".git"
+
+    /// Wraps an already-computed identity string, unmodified.
+    public init(plain value: String) {
+        self.description = value
+    }
+
+    /// Computes the identity for a URL or file path.
+    public init(location: String) {
+        self.description = Self.defaultName(fromLocation: location).lowercased()
+    }
+
+    /// The case-preserving default name SwiftPM uses for checkouts and `packageRef.name`.
+    public static func defaultName(fromLocation location: String) -> String {
+        // Ignore a single trailing separator.
+        var end = location.endIndex
+        if location.last == Self.pathSeparator {
+            end = location.index(before: end)
+        }
+
+        // Take the last path component.
+        let head = location[..<end]
+        let start = head.lastIndex(of: Self.pathSeparator).map { location.index(after: $0) } ?? location.startIndex
+        var component = location[start..<end]
+
+        // Strip `.git`.
+        if component.hasSuffix(Self.gitSuffix) {
+            component = component.dropLast(Self.gitSuffix.count)
+        }
+        return String(component)
+    }
+
+    public static func < (lhs: PackageIdentity, rhs: PackageIdentity) -> Bool {
+        lhs.description < rhs.description
+    }
+}
+
+/// Where a package comes from.
+public enum PackageKind: Sendable, Hashable {
+    case root(path: String)
+    case fileSystem(path: String)
+    case remoteSourceControl(url: String)
+
+    /// The value SwiftPM writes as `"kind"` in `Package.resolved` and workspace state.
+    public var serializedName: String {
+        switch self {
+        case .root:
+            return "root"
+        case .fileSystem:
+            return "fileSystem"
+        case .remoteSourceControl:
+            return "remoteSourceControl"
+        }
+    }
+
+    public var location: String {
+        switch self {
+        case .root(let path), .fileSystem(let path):
+            return path
+        case .remoteSourceControl(let url):
+            return url
+        }
+    }
+}
+
+/// A reference to a package: identity plus where to get it.
+public struct PackageReference: Sendable, Hashable, CustomStringConvertible {
+    public let identity: PackageIdentity
+    public let kind: PackageKind
+
+    /// SwiftPM's `deprecatedName`: the case-preserving default name of the location.
+    public var name: String {
+        PackageIdentity.defaultName(fromLocation: self.kind.location)
+    }
+
+    public init(identity: PackageIdentity, kind: PackageKind) {
+        self.identity = identity
+        self.kind = kind
+    }
+
+    public static func remote(_ url: String) -> PackageReference {
+        PackageReference(identity: PackageIdentity(location: url), kind: .remoteSourceControl(url: url))
+    }
+
+    public var description: String {
+        "\(self.identity) (\(self.kind.location))"
+    }
+}
+
+/// A dependency as declared by a manifest, after SwiftPM's pruning of unused dependencies.
+public struct DependencyDeclaration: Sendable, Hashable {
+    public let package: PackageReference
+    public let requirement: Requirement
+
+    public init(package: PackageReference, requirement: Requirement) {
+        self.package = package
+        self.requirement = requirement
+    }
+}

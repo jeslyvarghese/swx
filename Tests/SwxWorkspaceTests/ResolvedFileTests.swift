@@ -1,0 +1,110 @@
+import Foundation
+import SwxCore
+import SwxWorkspace
+import Testing
+
+/// A `Package.resolved` written by SwiftPM 6.4, used to check byte-for-byte compatibility.
+private let swiftPMResolvedFile = """
+{
+  "originHash" : "5e3be737f494d0fe019b49cfa29c7fda5ae0ed70a0d268429b881846a8457637",
+  "pins" : [
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-nio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-nio.git",
+      "state" : {
+        "revision" : "6db9d9abd92ad7399b8a564cafbb87d3507245fa",
+        "version" : "2.104.0"
+      }
+    }
+  ],
+  "version" : 3
+}
+
+"""
+
+/// The matching `workspace-state.json` (SwiftPM writes no trailing newline here).
+private let swiftPMWorkspaceState = """
+{
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "swift-argument-parser",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/apple/swift-argument-parser",
+          "name" : "swift-argument-parser"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+            "version" : "1.8.2"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "swift-argument-parser"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}
+"""
+
+struct ResolvedFileTests {
+    @Test func roundTripsSwiftPMOutputByteForByte() throws {
+        let original = Data(swiftPMResolvedFile.utf8)
+        let decoded = try ResolvedFile.decode(original)
+
+        #expect(decoded.pins.count == 2)
+        #expect(decoded.originHash == "5e3be737f494d0fe019b49cfa29c7fda5ae0ed70a0d268429b881846a8457637")
+        #expect(try decoded.encode(format: .v3) == original)
+    }
+
+    @Test func picksFormatFromToolsVersion() {
+        #expect(ResolvedFile.FormatVersion.forTools(ToolsVersion(6, 0)) == .v3)
+        #expect(ResolvedFile.FormatVersion.forTools(ToolsVersion(5, 9)) == .v2)
+        #expect(ResolvedFile.FormatVersion.forTools(ToolsVersion(5, 6)) == .v2)
+        #expect(ResolvedFile.FormatVersion.forTools(ToolsVersion(5, 5)) == .v1)
+    }
+
+    @Test func writesV2WithoutOriginHash() throws {
+        let decoded = try ResolvedFile.decode(Data(swiftPMResolvedFile.utf8))
+        let text = String(decoding: try decoded.encode(format: .v2), as: UTF8.self)
+        #expect(!text.contains("originHash"))
+        #expect(text.contains("\"version\" : 2"))
+    }
+
+    @Test func readsLegacyV1() throws {
+        let legacy = """
+        {"object": {"pins": [{"package": "Nimble", "repositoryURL": "https://github.com/Quick/Nimble.git",
+          "state": {"branch": null, "revision": "abc", "version": "9.0.0"}}]}, "version": 1}
+        """
+        let decoded = try ResolvedFile.decode(Data(legacy.utf8))
+        #expect(decoded.pins[PackageIdentity(plain: "nimble")]?.state == .version(Version(9, 0, 0), revision: "abc"))
+    }
+}
+
+struct WorkspaceStateTests {
+    @Test func roundTripsSwiftPMOutputByteForByte() throws {
+        let original = Data(swiftPMWorkspaceState.utf8)
+        let decoded = try #require(WorkspaceState.decodeIfCompatible(original))
+        #expect(decoded.dependencies.count == 1)
+        #expect(try decoded.encode() == original)
+    }
+}
