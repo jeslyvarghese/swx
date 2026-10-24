@@ -30,11 +30,14 @@ actor FactProvider {
         let version: Version
     }
 
-    init(source: GitSource, loader: ManifestLoader, toolchain: Toolchain, preferred: [PackageIdentity: Version]) {
+    private let mirrors: DependencyMirrors
+
+    init(source: GitSource, loader: ManifestLoader, toolchain: Toolchain, preferred: [PackageIdentity: Version], mirrors: DependencyMirrors) {
         self.source = source
         self.loader = loader
         self.toolchain = toolchain
         self.preferred = preferred
+        self.mirrors = mirrors
     }
 
     // MARK: Requests
@@ -157,7 +160,7 @@ actor FactProvider {
 
             var declarations: [DependencyDeclaration] = []
             for dependency in required {
-                guard let declaration = dependency.declaration else {
+                guard let declaration = dependency.declaration.map(self.mirrors.effective) else {
                     throw WorkspaceError(description: "\(package.identity) \(version): registry dependency '\(dependency.identity)' is not supported yet")
                 }
                 self.noteTraits(dependency.traits, for: declaration.package.identity)

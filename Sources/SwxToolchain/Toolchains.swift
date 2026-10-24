@@ -1,6 +1,12 @@
 import Foundation
 import SwxSystem
 
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// A Swift release published on swift.org.
 public struct ToolchainRelease: Sendable, Hashable, Decodable {
     /// `6.4.1`
@@ -72,8 +78,9 @@ public struct ToolchainManager: Sendable {
 
     /// All releases, oldest first.
     public func availableReleases() async throws -> [ToolchainRelease] {
-        let (data, _) = try await URLSession.shared.data(from: Remote.releases)
-        return try JSONDecoder().decode([ToolchainRelease].self, from: data)
+        // curl keeps the binary free of FoundationNetworking on Linux.
+        let result = try await ProcessRunner.run(["curl", "--fail", "--location", "--silent", "--show-error", Remote.releases.absoluteString])
+        return try JSONDecoder().decode([ToolchainRelease].self, from: result.standardOutput)
     }
 
     /// `6.3` → the newest `6.3.x`; `6.3.2` → exactly that; `latest` → the newest release.

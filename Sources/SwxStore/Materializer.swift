@@ -9,6 +9,8 @@ import Darwin
 public enum MaterializeStrategy: Sendable, CustomStringConvertible {
     /// Copy-on-write clone (APFS `clonefile`): instant and takes no extra space.
     case clone
+    /// Copy-on-write per file where the file system supports it (`cp --reflink=auto`: Btrfs, XFS).
+    case reflink
     /// A plain recursive copy.
     case copy
 
@@ -16,6 +18,8 @@ public enum MaterializeStrategy: Sendable, CustomStringConvertible {
         switch self {
         case .clone:
             return "clone"
+        case .reflink:
+            return "reflink"
         case .copy:
             return "copy"
         }
@@ -39,9 +43,32 @@ public enum Materializer {
             return .clone
         }
 
+        // Linux: GNU cp shares extents on CoW file systems and copies elsewhere.
+        if Self.reflinkTree(source, to: destination) {
+            return .reflink
+        }
+
         // Fall back to a regular copy (different volume, or a file system without clones).
         try FileManager.default.copyItem(at: source, to: destination)
         return .copy
+    }
+
+    #if os(Linux)
+    private static let copyCommand = "/bin/cp"
+    private static let reflinkArguments = ["-a", "--reflink=auto"]
+    #endif
+
+    private static func reflinkTree(_ source: URL, to destination: URL) -> Bool {
+        #if os(Linux)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: Self.copyCommand)
+        process.arguments = Self.reflinkArguments + [source.path, destination.path]
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+        #else
+        return false
+        #endif
     }
 
     private static func cloneTree(_ source: URL, to destination: URL) -> Bool {

@@ -104,6 +104,7 @@ public struct Workspace: Sendable {
         let originHash: String
         let layout: Layout
         let source: RootSource
+        let mirrors: DependencyMirrors
     }
 
     private enum RootSource: Sendable {
@@ -140,7 +141,8 @@ public struct Workspace: Sendable {
                 reference: PackageReference(identity: PackageIdentity(location: url.path), kind: .root(path: url.path)),
                 originHash: originHash,
                 layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages),
-                source: .xcode(manifest)
+                source: .xcode(manifest),
+                mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent())
             )
         }
     }
@@ -156,7 +158,8 @@ public struct Workspace: Sendable {
             reference: PackageReference(identity: PackageIdentity(location: directory.path), kind: .root(path: directory.path)),
             originHash: ContentHash.sha256(data),
             layout: layout,
-            source: .package(directory)
+            source: .package(directory),
+            mirrors: DependencyMirrors.load(for: directory)
         )
     }
 
@@ -203,7 +206,8 @@ public struct Workspace: Sendable {
 
         // Fast paths: the lockfile is authoritative when it was produced from this exact manifest.
         if mode == .respectPins, let resolvedFile, resolvedFile.originHash == originHash {
-            let pins = Array(resolvedFile.pins.values)
+            // Pins name original locations; checkouts come from the mirrors.
+            let pins = resolvedFile.pins.values.map { Pin(package: root.mirrors.effective($0.package), state: $0.state) }
             if Self.checkoutsMatch(pins: pins, state: state, layout: layout) {
                 return ResolveReport(outcome: .upToDate, pins: pins, changes: [], materialized: 0)
             }
@@ -240,7 +244,7 @@ public struct Workspace: Sendable {
                 preferred[pin.package.identity] = version
             }
         }
-        let facts = FactProvider(source: source, loader: loader, toolchain: toolchain, preferred: preferred)
+        let facts = FactProvider(source: source, loader: loader, toolchain: toolchain, preferred: preferred, mirrors: rootContext.mirrors)
 
         // Evaluate the root and split its dependencies into versioned ones and overrides.
         let root: Manifest
@@ -253,6 +257,7 @@ public struct Workspace: Sendable {
         let rootReference = rootContext.reference
         let overrides = try await self.collectOverrides(
             root: root,
+            mirrors: rootContext.mirrors,
             mode: mode,
             previousPins: previousPins,
             source: source,
@@ -290,7 +295,9 @@ public struct Workspace: Sendable {
             source: source,
             layout: layout
         )
-        let resolved = ResolvedFile(pins: Dictionary(pins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
+        // The lockfile records original locations, so it stays valid without the mirrors.
+        let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state) }
+        let resolved = ResolvedFile(pins: Dictionary(lockedPins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
         try Self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion), to: layout.resolvedFile)
 
         return ResolveReport(
@@ -391,6 +398,7 @@ public struct Workspace: Sendable {
     /// Fixes unversioned root dependencies outside the solver and lifts their dependencies to the root.
     private func collectOverrides(
         root: Manifest,
+        mirrors: DependencyMirrors,
         mode: ResolveMode,
         previousPins: [PackageIdentity: Pin],
         source: GitSource,
@@ -402,7 +410,7 @@ public struct Workspace: Sendable {
 
         while !pending.isEmpty {
             let dependency = pending.removeFirst()
-            guard let declaration = dependency.declaration else {
+            guard let declaration = dependency.declaration.map(mirrors.effective) else {
                 throw WorkspaceError(description: "registry dependency '\(dependency.identity)' is not supported yet")
             }
             let identity = declaration.package.identity

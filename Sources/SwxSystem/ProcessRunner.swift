@@ -1,5 +1,11 @@
 import Foundation
 
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// The captured result of a finished subprocess.
 public struct ProcessResult: Sendable {
     public let exitCode: Int32
