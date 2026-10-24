@@ -11,7 +11,10 @@ public struct SwxCommand: AsyncParsableCommand {
         commandName: "swx",
         abstract: "A fast, drop-in companion to SwiftPM.",
         version: "0.1.0",
-        subcommands: [PackageCommand.self, Resolve.self, Update.self, DebugCommand.self]
+        subcommands: [
+            PackageCommand.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
+            XcodeCommand.self, DebugCommand.self,
+        ]
     )
 
     public init() {}
@@ -21,8 +24,9 @@ public struct SwxCommand: AsyncParsableCommand {
 struct PackageCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "package",
-        abstract: "Perform operations on Swift packages.",
-        subcommands: [Resolve.self, Update.self]
+        abstract: "Perform operations on Swift packages (other subcommands go to `swift package`).",
+        subcommands: [Resolve.self, Update.self, PackagePassthrough.self],
+        defaultSubcommand: PackagePassthrough.self
     )
 }
 
@@ -53,7 +57,7 @@ struct GlobalOptions: ParsableArguments {
     func makeWorkspace() -> Workspace {
         let packageURL = URL(fileURLWithPath: self.packagePath).standardizedFileURL
         let options = WorkspaceOptions(
-            packagePath: packageURL,
+            root: .package(packageURL),
             cacheDirectory: self.cachePath.map { URL(fileURLWithPath: $0) },
             maximumConcurrency: self.jobs ?? ResolverDefaults.concurrency,
             verbosity: self.verbosity

@@ -15,14 +15,14 @@ enum ResolverDefaults {
 
 /// Runs a resolve and prints a SwiftPM-style summary.
 enum ResolveRunner {
-    static func run(mode: ResolveMode, global: GlobalOptions) async throws {
+    static func run(mode: ResolveMode, global: GlobalOptions, workspace: Workspace? = nil) async throws {
         let clock = ContinuousClock()
         let started = clock.now
 
         // Resolve, mapping errors to a clean exit.
         let report: ResolveReport
         do {
-            report = try await global.makeWorkspace().resolve(mode: mode)
+            report = try await (workspace ?? global.makeWorkspace()).resolve(mode: mode)
         } catch {
             FileHandle.standardError.write(Data("error: \(error)\n".utf8))
             throw ExitCode.failure
@@ -30,11 +30,15 @@ enum ResolveRunner {
         guard global.verbosity > .quiet else { return }
 
         // Pin changes, then a one-line summary.
+        Self.printChanges(report)
+        let elapsed = clock.now - started
+        print("\(Self.describe(report.outcome)) \(report.pins.count) package\(report.pins.count == 1 ? "" : "s") in \(Self.format(elapsed))")
+    }
+
+    static func printChanges(_ report: ResolveReport) {
         for change in report.changes {
             print(Self.describe(change))
         }
-        let elapsed = clock.now - started
-        print("\(Self.describe(report.outcome)) \(report.pins.count) package\(report.pins.count == 1 ? "" : "s") in \(Self.format(elapsed))")
     }
 
     private static func describe(_ change: PinChange) -> String {

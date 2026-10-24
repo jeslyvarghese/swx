@@ -1,0 +1,211 @@
+import Foundation
+import SwxCore
+import SwxSystem
+
+/// A Swift package dependency declared in an Xcode project (`XCRemoteSwiftPackageReference`
+/// or `XCLocalSwiftPackageReference`).
+public struct XcodePackageReference: Sendable, Hashable {
+    public enum Location: Sendable, Hashable {
+        case remote(url: String)
+        case local(path: String)
+    }
+
+    public let location: Location
+    public let requirement: Requirement
+
+    /// The string SwiftPM hashes into `originHash` for this dependency.
+    public var locationString: String {
+        switch self.location {
+        case .remote(let url):
+            return url
+        case .local(let path):
+            return path
+        }
+    }
+}
+
+/// The package-related facts of an `.xcodeproj` or `.xcworkspace`.
+public struct XcodeProject: Sendable {
+    public let name: String
+    public let packageReferences: [XcodePackageReference]
+    /// Where Xcode keeps the shared `Package.resolved`.
+    public let resolvedFile: URL
+}
+
+public struct XcodeProjectError: Error, CustomStringConvertible {
+    public let description: String
+}
+
+/// Reads Xcode projects and workspaces.
+public enum XcodeProjectReader {
+    private enum Extension {
+        static let project = "xcodeproj"
+        static let workspace = "xcworkspace"
+    }
+
+    private enum Path {
+        static let projectFile = "project.pbxproj"
+        static let embeddedWorkspace = "project.xcworkspace"
+        static let sharedData = "xcshareddata"
+        static let swiftPM = "swiftpm"
+        static let workspaceContents = "contents.xcworkspacedata"
+    }
+
+    private enum ObjectKey {
+        static let objects = "objects"
+        static let rootObject = "rootObject"
+        static let packageReferences = "packageReferences"
+        static let isa = "isa"
+        static let repositoryURL = "repositoryURL"
+        static let requirement = "requirement"
+        static let relativePath = "relativePath"
+        static let kind = "kind"
+        static let minimumVersion = "minimumVersion"
+        static let maximumVersion = "maximumVersion"
+        static let version = "version"
+        static let branch = "branch"
+        static let revision = "revision"
+    }
+
+    private enum ObjectType {
+        static let remotePackage = "XCRemoteSwiftPackageReference"
+        static let localPackage = "XCLocalSwiftPackageReference"
+    }
+
+    private enum RequirementKind {
+        static let upToNextMajor = "upToNextMajorVersion"
+        static let upToNextMinor = "upToNextMinorVersion"
+        static let exact = "exactVersion"
+        static let range = "versionRange"
+        static let branch = "branch"
+        static let revision = "revision"
+    }
+
+    /// `group:App.xcodeproj` / `container:App.xcodeproj` locations in workspace XML.
+    private static let fileReferencePattern = #"location\s*=\s*"(?:group|container|absolute):([^"]+\.xcodeproj)""#
+
+    /// Reads a project or workspace at `url`.
+    public static func read(_ url: URL) async throws -> XcodeProject {
+        switch url.pathExtension {
+        case Extension.project:
+            let references = try await Self.packageReferences(inProject: url)
+            let resolved = url.appendingPathComponent(Path.embeddedWorkspace)
+                .appendingPathComponent(Path.sharedData)
+                .appendingPathComponent(Path.swiftPM)
+                .appendingPathComponent(WellKnownFile.packageResolved)
+            return XcodeProject(name: url.deletingPathExtension().lastPathComponent, packageReferences: references, resolvedFile: resolved)
+
+        case Extension.workspace:
+            // A workspace resolves the union of its projects' packages, pinned in its own shared data.
+            var references: [XcodePackageReference] = []
+            for project in try Self.projects(inWorkspace: url) {
+                for reference in try await Self.packageReferences(inProject: project) where !references.contains(reference) {
+                    references.append(reference)
+                }
+            }
+            let resolved = url.appendingPathComponent(Path.sharedData)
+                .appendingPathComponent(Path.swiftPM)
+                .appendingPathComponent(WellKnownFile.packageResolved)
+            return XcodeProject(name: url.deletingPathExtension().lastPathComponent, packageReferences: references, resolvedFile: resolved)
+
+        default:
+            throw XcodeProjectError(description: "\(url.path) is not an .xcodeproj or .xcworkspace")
+        }
+    }
+
+    /// Finds the single project or workspace in a directory (workspaces win, like xcodebuild).
+    public static func locate(in directory: URL) throws -> URL {
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        if let workspace = entries.first(where: { $0.hasSuffix("." + Extension.workspace) }) {
+            return directory.appendingPathComponent(workspace)
+        }
+        if let project = entries.first(where: { $0.hasSuffix("." + Extension.project) }) {
+            return directory.appendingPathComponent(project)
+        }
+        throw XcodeProjectError(description: "no .xcodeproj or .xcworkspace in \(directory.path)")
+    }
+
+    // MARK: Projects
+
+    static func packageReferences(inProject project: URL) async throws -> [XcodePackageReference] {
+        // `plutil` reads the OpenStep plist format of project.pbxproj.
+        let projectFile = project.appendingPathComponent(Path.projectFile)
+        let result = try await ProcessRunner.run(["plutil", "-convert", "json", "-o", "-", projectFile.path])
+        guard let json = try JSONSerialization.jsonObject(with: result.standardOutput) as? [String: Any],
+              let objects = json[ObjectKey.objects] as? [String: [String: Any]] else {
+            throw XcodeProjectError(description: "unreadable \(projectFile.path)")
+        }
+
+        // Xcode hashes references in the project's `packageReferences` order; fall back to sorted ids.
+        let rootObject = (json[ObjectKey.rootObject] as? String).flatMap { objects[$0] }
+        let ordered = rootObject?[ObjectKey.packageReferences] as? [String] ?? objects.keys.sorted()
+
+        var references: [XcodePackageReference] = []
+        for identifier in ordered {
+            guard let object = objects[identifier] else { continue }
+            switch object[ObjectKey.isa] as? String {
+            case ObjectType.remotePackage:
+                guard let url = object[ObjectKey.repositoryURL] as? String else { continue }
+                let requirement = try Self.requirement(object[ObjectKey.requirement] as? [String: Any] ?? [:], url: url)
+                references.append(XcodePackageReference(location: .remote(url: url), requirement: requirement))
+            case ObjectType.localPackage:
+                guard let relative = object[ObjectKey.relativePath] as? String else { continue }
+                let path = project.deletingLastPathComponent().appendingPathComponent(relative).standardizedFileURL.path
+                references.append(XcodePackageReference(location: .local(path: path), requirement: .unversioned))
+            default:
+                continue
+            }
+        }
+        return references
+    }
+
+    /// Maps Xcode's requirement kinds onto SwiftPM requirements.
+    static func requirement(_ json: [String: Any], url: String) throws -> Requirement {
+        func version(_ key: String) throws -> Version {
+            guard let text = json[key] as? String, let version = Version(text) else {
+                throw XcodeProjectError(description: "invalid \(key) for \(url)")
+            }
+            return version
+        }
+
+        switch json[ObjectKey.kind] as? String {
+        case RequirementKind.upToNextMajor:
+            let minimum = try version(ObjectKey.minimumVersion)
+            return .version(.range(VersionRange(minimum, Version(minimum.major + 1, 0, 0))))
+        case RequirementKind.upToNextMinor:
+            let minimum = try version(ObjectKey.minimumVersion)
+            return .version(.range(VersionRange(minimum, Version(minimum.major, minimum.minor + 1, 0))))
+        case RequirementKind.exact:
+            return .version(.exact(try version(ObjectKey.version)))
+        case RequirementKind.range:
+            return .version(.range(VersionRange(try version(ObjectKey.minimumVersion), try version(ObjectKey.maximumVersion))))
+        case RequirementKind.branch:
+            guard let branch = json[ObjectKey.branch] as? String else { break }
+            return .branch(branch)
+        case RequirementKind.revision:
+            guard let revision = json[ObjectKey.revision] as? String else { break }
+            return .revision(revision)
+        default:
+            break
+        }
+        throw XcodeProjectError(description: "unsupported package requirement for \(url): \(json)")
+    }
+
+    // MARK: Workspaces
+
+    static func projects(inWorkspace workspace: URL) throws -> [URL] {
+        let contents = try String(contentsOf: workspace.appendingPathComponent(Path.workspaceContents), encoding: .utf8)
+        let regex = try NSRegularExpression(pattern: Self.fileReferencePattern)
+        let range = NSRange(contents.startIndex..., in: contents)
+
+        // Relative locations are relative to the workspace's directory.
+        return regex.matches(in: contents, range: range).compactMap { match in
+            guard let pathRange = Range(match.range(at: 1), in: contents) else { return nil }
+            let path = String(contents[pathRange])
+            if path.hasPrefix("/") {
+                return URL(fileURLWithPath: path)
+            }
+            return workspace.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
+        }
+    }
+}

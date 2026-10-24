@@ -34,7 +34,13 @@ let package = Package(
         // Orchestration: resolved file, workspace state, resolution driver.
         .target(
             name: "SwxWorkspace",
-            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem"]
+            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode"]
+        ),
+
+        // Reads package references and pins from Xcode projects and workspaces.
+        .target(
+            name: "SwxXcode",
+            dependencies: ["SwxCore", "SwxSystem"]
         ),
 
         // Pure PubGrub solver (sans-I/O). Depends only on SwxCore.
@@ -85,5 +91,6 @@ let package = Package(
         .testTarget(name: "SwxResolverTests", dependencies: ["SwxCore", "SwxResolver"]),
         .testTarget(name: "SwxManifestTests", dependencies: ["SwxCore", "SwxManifest"]),
         .testTarget(name: "SwxWorkspaceTests", dependencies: ["SwxCore", "SwxWorkspace"]),
+        .testTarget(name: "SwxXcodeTests", dependencies: ["SwxCore", "SwxXcode"]),
     ]
 )

@@ -5,6 +5,7 @@ import SwxResolver
 import SwxSource
 import SwxStore
 import SwxSystem
+import SwxXcode
 
 /// Whether existing pins constrain resolution.
 public enum ResolveMode: Sendable {
@@ -44,15 +45,24 @@ public enum Verbosity: Sendable, Comparable {
     case verbose
 }
 
+/// What is being resolved.
+public enum WorkspaceRoot: Sendable {
+    /// A Swift package directory: pins in `Package.resolved`, checkouts in `.build`.
+    case package(URL)
+    /// An `.xcodeproj` or `.xcworkspace`: pins in its shared data, checkouts in `sourcePackages`
+    /// (hand that directory to `xcodebuild -clonedSourcePackagesDirPath`).
+    case xcodeProject(URL, sourcePackages: URL)
+}
+
 public struct WorkspaceOptions: Sendable {
-    public var packagePath: URL
+    public var root: WorkspaceRoot
     /// Overrides the shared cache location (otherwise `SWX_CACHE_DIR`, `XDG_CACHE_HOME`, `~/.cache/swx`).
     public var cacheDirectory: URL?
     public var maximumConcurrency: Int
     public var verbosity: Verbosity
 
-    public init(packagePath: URL, cacheDirectory: URL?, maximumConcurrency: Int, verbosity: Verbosity) {
-        self.packagePath = packagePath
+    public init(root: WorkspaceRoot, cacheDirectory: URL?, maximumConcurrency: Int, verbosity: Verbosity) {
+        self.root = root
         self.cacheDirectory = cacheDirectory
         self.maximumConcurrency = maximumConcurrency
         self.verbosity = verbosity
@@ -71,49 +81,134 @@ public struct Workspace: Sendable {
 
     // MARK: Locations
 
-    private var buildDirectory: URL {
-        self.options.packagePath.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
+    /// Where pins, state and checkouts live for this root.
+    struct Layout: Sendable {
+        let resolvedFile: URL
+        /// `.build` for packages, `SourcePackages` for Xcode.
+        let stateDirectory: URL
+
+        var checkoutsDirectory: URL {
+            self.stateDirectory.appendingPathComponent(WellKnownFile.checkoutsDirectory, isDirectory: true)
+        }
+
+        var workspaceState: URL {
+            self.stateDirectory.appendingPathComponent(WellKnownFile.workspaceState)
+        }
     }
 
-    private var checkoutsDirectory: URL {
-        self.buildDirectory.appendingPathComponent(WellKnownFile.checkoutsDirectory, isDirectory: true)
+    /// The root's identity, origin hash, and how to obtain its manifest.
+    private struct RootContext: Sendable {
+        let reference: PackageReference
+        let originHash: String
+        let layout: Layout
+        let source: RootSource
     }
 
-    private var resolvedFilePath: URL {
-        self.options.packagePath.appendingPathComponent(WellKnownFile.packageResolved)
+    private enum RootSource: Sendable {
+        case package(URL)
+        /// Xcode declares dependencies directly; there is no manifest to evaluate.
+        case xcode(Manifest)
     }
 
-    private var workspaceStatePath: URL {
-        self.buildDirectory.appendingPathComponent(WellKnownFile.workspaceState)
+    /// Xcode always writes `Package.resolved` v3.
+    private static let xcodeToolsVersion = "6.0.0"
+
+    private func rootContext() async throws -> RootContext {
+        switch self.options.root {
+        case .package(let directory):
+            // SwiftPM: originHash is the SHA-256 of the root manifest's bytes.
+            let manifestURL = directory.appendingPathComponent(WellKnownFile.manifest)
+            guard let data = FileSystem.readIfPresent(manifestURL) else {
+                throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(directory.path)")
+            }
+            let layout = Layout(
+                resolvedFile: directory.appendingPathComponent(WellKnownFile.packageResolved),
+                stateDirectory: directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
+            )
+            return RootContext(
+                reference: PackageReference(identity: PackageIdentity(location: directory.path), kind: .root(path: directory.path)),
+                originHash: ContentHash.sha256(data),
+                layout: layout,
+                source: .package(directory)
+            )
+
+        case .xcodeProject(let url, let sourcePackages):
+            // Xcode passes its package references as root dependencies, so SwiftPM hashes their locations.
+            let project = try await XcodeProjectReader.read(url)
+            let originHash = ContentHash.sha256(project.packageReferences.map(\.locationString).joined())
+            let manifest = Manifest(
+                name: project.name,
+                toolsVersion: Self.xcodeToolsVersion,
+                dependencies: project.packageReferences.map(Self.dependency),
+                targets: [],
+                products: [],
+                traits: []
+            )
+            return RootContext(
+                reference: PackageReference(identity: PackageIdentity(location: url.path), kind: .root(path: url.path)),
+                originHash: originHash,
+                layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages),
+                source: .xcode(manifest)
+            )
+        }
+    }
+
+    /// An Xcode package reference as a manifest dependency.
+    private static func dependency(_ reference: XcodePackageReference) -> Manifest.Dependency {
+        let requirement: Manifest.Dependency.Requirement
+        switch reference.requirement {
+        case .version(.range(let range)):
+            requirement = .range(lowerBound: range.lowerBound.description, upperBound: range.upperBound.description)
+        case .version(.exact(let version)):
+            requirement = .exact(version.description)
+        case .branch(let branch):
+            requirement = .branch(branch)
+        case .revision(let revision):
+            requirement = .revision(revision)
+        case .unversioned:
+            requirement = .none
+        }
+
+        switch reference.location {
+        case .remote(let url):
+            return Manifest.Dependency(identity: PackageIdentity(location: url).description, explicitName: nil, location: .remote(url: url), requirement: requirement, traits: [Manifest.defaultTrait])
+        case .local(let path):
+            return Manifest.Dependency(identity: PackageIdentity(location: path).description, explicitName: nil, location: .local(path: path), requirement: requirement, traits: [Manifest.defaultTrait])
+        }
+    }
+
+    /// The project or workspace xcodebuild would pick in `directory`.
+    public static func locateXcodeProject(in directory: URL) throws -> URL {
+        try XcodeProjectReader.locate(in: directory)
     }
 
     // MARK: Resolve
 
     public func resolve(mode: ResolveMode) async throws -> ResolveReport {
-        // Hash the root manifest exactly as SwiftPM computes `originHash`.
-        let rootManifest = try self.rootManifestContents()
-        let originHash = ContentHash.sha256(rootManifest.data)
+        let root = try await self.rootContext()
+        let layout = root.layout
+        let originHash = root.originHash
 
         // Load what's on disk.
-        let resolvedFile = try FileSystem.readIfPresent(self.resolvedFilePath).map(ResolvedFile.decode)
-        let state = FileSystem.readIfPresent(self.workspaceStatePath).flatMap(WorkspaceState.decodeIfCompatible)
+        let resolvedFile = try FileSystem.readIfPresent(layout.resolvedFile).map(ResolvedFile.decode)
+        let state = FileSystem.readIfPresent(layout.workspaceState).flatMap(WorkspaceState.decodeIfCompatible)
             ?? WorkspaceState(dependencies: [:])
 
         // Fast paths: the lockfile is authoritative when it was produced from this exact manifest.
         if mode == .respectPins, let resolvedFile, resolvedFile.originHash == originHash {
             let pins = Array(resolvedFile.pins.values)
-            if self.checkoutsMatch(pins: pins, state: state) {
+            if Self.checkoutsMatch(pins: pins, state: state, layout: layout) {
                 return ResolveReport(outcome: .upToDate, pins: pins, changes: [], materialized: 0)
             }
             let source = GitSource(store: self.store, maximumConcurrency: self.options.maximumConcurrency)
-            let materialized = try await self.materialize(pins: pins, fileSystemDependencies: [], previous: state, source: source)
+            let materialized = try await self.materialize(pins: pins, fileSystemDependencies: [], previous: state, source: source, layout: layout)
             return ResolveReport(outcome: .restoredFromPins, pins: pins, changes: [], materialized: materialized)
         }
 
         // Full resolution.
         return try await self.fullResolve(
             mode: mode,
-            originHash: originHash,
+            root: root,
             previousPins: resolvedFile?.pins ?? [:],
             previousState: state
         )
@@ -121,10 +216,11 @@ public struct Workspace: Sendable {
 
     private func fullResolve(
         mode: ResolveMode,
-        originHash: String,
+        root rootContext: RootContext,
         previousPins: [PackageIdentity: Pin],
         previousState: WorkspaceState
     ) async throws -> ResolveReport {
+        let layout = rootContext.layout
         let toolchain = try await Toolchain.detect()
         let concurrency = self.options.maximumConcurrency
         let source = GitSource(store: self.store, maximumConcurrency: concurrency)
@@ -140,11 +236,14 @@ public struct Workspace: Sendable {
         let facts = FactProvider(source: source, loader: loader, toolchain: toolchain, preferred: preferred)
 
         // Evaluate the root and split its dependencies into versioned ones and overrides.
-        let root = try await loader.load(packageAt: self.options.packagePath)
-        let rootReference = PackageReference(
-            identity: PackageIdentity(location: self.options.packagePath.path),
-            kind: .root(path: self.options.packagePath.path)
-        )
+        let root: Manifest
+        switch rootContext.source {
+        case .package(let directory):
+            root = try await loader.load(packageAt: directory)
+        case .xcode(let manifest):
+            root = manifest
+        }
+        let rootReference = rootContext.reference
         let overrides = try await self.collectOverrides(
             root: root,
             mode: mode,
@@ -181,10 +280,11 @@ public struct Workspace: Sendable {
             pins: pins,
             fileSystemDependencies: fileSystemDependencies,
             previous: previousState,
-            source: source
+            source: source,
+            layout: layout
         )
-        let resolved = ResolvedFile(pins: Dictionary(pins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: originHash)
-        try self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion))
+        let resolved = ResolvedFile(pins: Dictionary(pins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
+        try Self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion), to: layout.resolvedFile)
 
         return ResolveReport(
             outcome: .resolved,
@@ -356,14 +456,14 @@ public struct Workspace: Sendable {
     // MARK: Checkouts
 
     /// Are all pins already checked out at the right revisions?
-    private func checkoutsMatch(pins: [Pin], state: WorkspaceState) -> Bool {
+    private static func checkoutsMatch(pins: [Pin], state: WorkspaceState, layout: Layout) -> Bool {
         pins.allSatisfy { pin in
             guard let managed = state.dependencies[pin.package.identity],
                   case .sourceControlCheckout(let checkedOut) = managed.state,
                   checkedOut == pin.state else {
                 return false
             }
-            return FileSystem.isDirectory(self.checkoutsDirectory.appendingPathComponent(managed.subpath))
+            return FileSystem.isDirectory(layout.checkoutsDirectory.appendingPathComponent(managed.subpath))
         }
     }
 
@@ -372,16 +472,17 @@ public struct Workspace: Sendable {
         pins: [Pin],
         fileSystemDependencies: [ManagedDependency],
         previous: WorkspaceState,
-        source: GitSource
+        source: GitSource,
+        layout: Layout
     ) async throws -> Int {
         // Only touch checkouts whose revision changed or whose directory is missing.
-        let stale = pins.filter { !self.checkoutsMatch(pins: [$0], state: previous) }
+        let stale = pins.filter { !Self.checkoutsMatch(pins: [$0], state: previous, layout: layout) }
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for pin in stale {
                 group.addTask {
                     let tree = try await source.sourceTree(of: pin.package, revision: pin.state.revision)
-                    let destination = self.checkoutsDirectory.appendingPathComponent(pin.package.name)
+                    let destination = layout.checkoutsDirectory.appendingPathComponent(pin.package.name)
                     let strategy = try Materializer.materialize(tree, at: destination)
                     self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
                 }
@@ -393,7 +494,7 @@ public struct Workspace: Sendable {
         let current = Set(pins.map(\.package.identity))
         for (identity, managed) in previous.dependencies where !current.contains(identity) {
             guard case .sourceControlCheckout = managed.state else { continue }
-            try FileSystem.removeTree(self.checkoutsDirectory.appendingPathComponent(managed.subpath))
+            try FileSystem.removeTree(layout.checkoutsDirectory.appendingPathComponent(managed.subpath))
         }
 
         // Record the new state, keeping SwiftPM's own artifacts and prebuilts.
@@ -409,34 +510,21 @@ public struct Workspace: Sendable {
         for dependency in fileSystemDependencies {
             state.dependencies[dependency.package.identity] = dependency
         }
-        try FileSystem.writeAtomically(try state.encode(), to: self.workspaceStatePath)
+        try FileSystem.writeAtomically(try state.encode(), to: layout.workspaceState)
         return stale.count
     }
 
     // MARK: Files
 
-    private struct RootManifest {
-        let data: Data
-    }
-
-    /// The root manifest SwiftPM hashes for `originHash` (version-specific manifests aside).
-    private func rootManifestContents() throws -> RootManifest {
-        let url = self.options.packagePath.appendingPathComponent(WellKnownFile.manifest)
-        guard let data = FileSystem.readIfPresent(url) else {
-            throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(self.options.packagePath.path)")
-        }
-        return RootManifest(data: data)
-    }
-
     /// Writes only when the bytes change, and removes the file when there are no pins (like SwiftPM).
-    private func writeResolvedFile(_ file: ResolvedFile, format: ResolvedFile.FormatVersion) throws {
+    private static func writeResolvedFile(_ file: ResolvedFile, format: ResolvedFile.FormatVersion, to url: URL) throws {
         guard !file.pins.isEmpty else {
-            try FileSystem.removeTree(self.resolvedFilePath)
+            try FileSystem.removeTree(url)
             return
         }
         let data = try file.encode(format: format)
-        guard FileSystem.readIfPresent(self.resolvedFilePath) != data else { return }
-        try FileSystem.writeAtomically(data, to: self.resolvedFilePath)
+        guard FileSystem.readIfPresent(url) != data else { return }
+        try FileSystem.writeAtomically(data, to: url)
     }
 
     private static func changes(from old: [PackageIdentity: Pin], to new: [PackageIdentity: Pin]) -> [PinChange] {
