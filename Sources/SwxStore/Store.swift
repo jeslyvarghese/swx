@@ -10,6 +10,8 @@ import SwxSystem
 /// src/<revision>/        immutable exported source trees
 /// manifests/<key>.json   evaluated manifest summaries
 /// revisions/<sha>.json   root manifest files at a commit (commits are immutable)
+/// tools/<key>/           built command-line tools (`swx tool run`)
+/// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// ```
 /// No other module knows this layout; everyone asks the store for paths.
 public struct Store: Sendable {
@@ -18,6 +20,9 @@ public struct Store: Sendable {
         case src
         case manifests
         case revisions
+        case tools
+        case scripts
+        case toolchains
         case temporary = "tmp"
     }
 
@@ -70,6 +75,33 @@ public struct Store: Sendable {
     /// Manifest files at a commit; valid forever because a commit's contents never change.
     public func revisionManifestsPath(revision: String) -> URL {
         self.directory(.revisions).appendingPathComponent(revision).appendingPathExtension(Self.jsonExtension)
+    }
+
+    /// A tool built from `revision` with one toolchain.
+    public func toolPath(name: String, revision: String, toolchainKey: String) -> URL {
+        self.directory(.tools).appendingPathComponent("\(name)-\(revision.prefix(Self.shortHashLength))-\(toolchainKey)", isDirectory: true)
+    }
+
+    /// Remembers which built tool an exact `name@version` maps to, so it starts without network.
+    public func toolIndexPath(name: String, version: String, toolchainKey: String) -> URL {
+        self.directory(.tools).appendingPathComponent(Self.indexDirectory, isDirectory: true)
+            .appendingPathComponent("\(name)@\(version)-\(toolchainKey)")
+    }
+
+    private static let indexDirectory = "index"
+
+    public var toolsDirectory: URL {
+        self.directory(.tools)
+    }
+
+    /// The generated package for a script, keyed by script content and toolchain.
+    public func scriptPath(key: String) -> URL {
+        self.directory(.scripts).appendingPathComponent(key, isDirectory: true)
+    }
+
+    /// `swift --version` output for a toolchain fingerprint.
+    public func toolchainCachePath(fingerprint: String) -> URL {
+        self.directory(.toolchains).appendingPathComponent(fingerprint)
     }
 
     /// Every cached per-revision manifest record.

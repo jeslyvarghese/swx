@@ -16,11 +16,29 @@ public struct Toolchain: Sendable, Hashable {
         self.toolsVersion = toolsVersion
     }
 
-    public static func detect() async throws -> Toolchain {
-        let result = try await ProcessRunner.run(["swift", "--version"])
+    private static let executable = "swift"
+
+    /// The active toolchain. `swift --version` is only spawned when the fingerprint of the
+    /// `swift` on PATH changes; the answer is cached in the store.
+    public static func detect(store: Store = .default()) async throws -> Toolchain {
+        let fingerprint = ExecutableLookup.fingerprint(of: Self.executable)
+        let cacheURL = store.toolchainCachePath(fingerprint: ContentHash.sha256(fingerprint))
+        if let cached = FileSystem.readIfPresent(cacheURL).map({ String(decoding: $0, as: UTF8.self) }), !cached.isEmpty {
+            return Toolchain(versionDescription: cached, toolsVersion: Self.parseToolsVersion(cached) ?? .v5_9)
+        }
+
+        let result = try await ProcessRunner.run([Self.executable, "--version"])
         let text = result.output + result.errorOutput
+        try? FileSystem.writeAtomically(Data(text.utf8), to: cacheURL)
         return Toolchain(versionDescription: text, toolsVersion: Self.parseToolsVersion(text) ?? .v5_9)
     }
+
+    /// A short, stable key for cache paths that depend on the toolchain.
+    public var key: String {
+        String(ContentHash.sha256(self.versionDescription).prefix(Self.keyLength))
+    }
+
+    private static let keyLength = 8
 
     /// `Apple Swift version 6.4 (swiftlang-…)` → 6.4.0
     static func parseToolsVersion(_ text: String) -> ToolsVersion? {
@@ -35,7 +53,7 @@ public struct Toolchain: Sendable, Hashable {
 /// The cache key covers the manifest text and the toolchain, so a hit is always valid:
 /// the cache is memoization of a pure function `(manifest, toolchain) → Manifest`.
 public actor ManifestLoader {
-    private static let cacheFormatVersion = "1"
+    private static let cacheFormatVersion = "2"
     private static let evaluationPrefix = "swx-manifest"
 
     /// `SWX_STATIC_MANIFESTS=0` forces real evaluation for every manifest (for debugging).

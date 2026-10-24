@@ -7,6 +7,11 @@ import SwxSystem
 public struct TaggedVersion: Sendable, Hashable {
     public let version: Version
     public let revision: String
+
+    public init(version: Version, revision: String) {
+        self.version = version
+        self.revision = revision
+    }
 }
 
 /// Root-level manifest files at one revision (`Package.swift`, `Package@swift-*.swift`).

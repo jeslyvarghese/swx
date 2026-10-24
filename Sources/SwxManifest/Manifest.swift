@@ -124,12 +124,25 @@ public struct Manifest: Sendable, Codable, Hashable {
     }
 
     public struct Product: Sendable, Codable, Hashable {
+        public enum Kind: String, Sendable, Codable, Hashable {
+            case library
+            case executable
+            case plugin
+            case macro
+            case snippet
+            case test
+            /// AppleProductTypes applications (`.iOSApplication`, …).
+            case application
+        }
+
         public var name: String
         public var targets: [String]
+        public var kind: Kind
 
-        public init(name: String, targets: [String]) {
+        public init(name: String, targets: [String], kind: Kind = .library) {
             self.name = name
             self.targets = targets
+            self.kind = kind
         }
     }
 

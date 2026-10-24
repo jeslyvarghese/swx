@@ -34,7 +34,13 @@ let package = Package(
         // Orchestration: resolved file, workspace state, resolution driver.
         .target(
             name: "SwxWorkspace",
-            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode"]
+            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain"]
+        ),
+
+        // Installs and selects Swift toolchains (`.swift-version`).
+        .target(
+            name: "SwxToolchain",
+            dependencies: ["SwxSystem"]
         ),
 
         // Reads package references and pins from Xcode projects and workspaces.
@@ -90,7 +96,8 @@ let package = Package(
         .testTarget(name: "SwxCoreTests", dependencies: ["SwxCore"]),
         .testTarget(name: "SwxResolverTests", dependencies: ["SwxCore", "SwxResolver"]),
         .testTarget(name: "SwxManifestTests", dependencies: ["SwxCore", "SwxManifest"]),
-        .testTarget(name: "SwxWorkspaceTests", dependencies: ["SwxCore", "SwxWorkspace"]),
+        .testTarget(name: "SwxWorkspaceTests", dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"]),
         .testTarget(name: "SwxXcodeTests", dependencies: ["SwxCore", "SwxXcode"]),
+        .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
     ]
 )

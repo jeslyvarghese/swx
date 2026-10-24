@@ -467,16 +467,18 @@ public enum StaticManifestParser {
 
         // MARK: Products and targets
 
-        private static let productKinds: Set<String> = ["library", "executable", "plugin"]
+        private static let productKinds: [String: Manifest.Product.Kind] = [
+            "library": .library, "executable": .executable, "plugin": .plugin,
+        ]
         private static let targetKinds: Set<String> = ["target", "executableTarget", "testTarget", "plugin", "macro", "systemLibrary", "binaryTarget"]
 
         private func product(_ expression: ExprSyntax) -> Manifest.Product? {
-            guard let (member, arguments) = self.call(expression), Self.productKinds.contains(member),
+            guard let (member, arguments) = self.call(expression), let kind = Self.productKinds[member],
                   let name = arguments[Label.name].flatMap({ self.string($0) }),
                   let targets = arguments[Label.targets].flatMap({ self.list($0, self.string) }) else {
                 return nil
             }
-            return Manifest.Product(name: name, targets: targets)
+            return Manifest.Product(name: name, targets: targets, kind: kind)
         }
 
         private func target(_ expression: ExprSyntax) -> Manifest.Target? {

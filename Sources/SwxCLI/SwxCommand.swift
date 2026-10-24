@@ -13,7 +13,7 @@ public struct SwxCommand: AsyncParsableCommand {
         version: "0.1.0",
         subcommands: [
             PackageCommand.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
-            XcodeCommand.self, DebugCommand.self,
+            ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, DebugCommand.self,
         ]
     )
 
@@ -54,15 +54,21 @@ struct GlobalOptions: ParsableArguments {
         return self.verbose ? .verbose : .normal
     }
 
-    func makeWorkspace() -> Workspace {
-        let packageURL = URL(fileURLWithPath: self.packagePath).standardizedFileURL
-        let options = WorkspaceOptions(
-            root: .package(packageURL),
+    var packageURL: URL {
+        URL(fileURLWithPath: self.packagePath).standardizedFileURL
+    }
+
+    func workspaceOptions() -> WorkspaceOptions {
+        WorkspaceOptions(
+            root: .package(self.packageURL),
             cacheDirectory: self.cachePath.map { URL(fileURLWithPath: $0) },
             maximumConcurrency: self.jobs ?? ResolverDefaults.concurrency,
             verbosity: self.verbosity
         )
-        return Workspace(options: options)
+    }
+
+    func makeWorkspace() -> Workspace {
+        Workspace(options: self.workspaceOptions())
     }
 }
 

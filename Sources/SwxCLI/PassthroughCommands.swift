@@ -18,6 +18,12 @@ enum Passthrough {
 
     /// Resolves (unless told not to), then replaces this process with `swift <command> …`.
     static func run(_ command: [String], arguments: [String], resolution: Resolution) async throws -> Never {
+        // `.swift-version` picks the toolchain for both swx and the SwiftPM it hands over to.
+        let packageURL = URL(fileURLWithPath: Self.packagePath(in: arguments)).standardizedFileURL
+        try await CommandSupport.reportingErrors {
+            try await Toolchains().prepare(for: packageURL, missing: .install) { CommandSupport.status($0) }
+        }
+
         if resolution == .resolveFirst {
             try await Self.resolve(packagePath: Self.packagePath(in: arguments))
         }
@@ -84,15 +90,37 @@ struct Test: AsyncParsableCommand {
     }
 }
 
-/// `swx run`: resolve with swx, run with SwiftPM.
+/// `swx run`: resolve with swx and run with SwiftPM, or run a single-file script.
 struct Run: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Resolve with swx, then run `swift run`.")
+    static let configuration = CommandConfiguration(
+        abstract: "Run an executable product (via `swift run`) or a script: swx run tool.swift [args]."
+    )
 
-    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift run`.")
+    private static let releaseFlag = "--release"
+
+    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift run`, or a .swift script followed by its arguments.")
     var arguments: [String] = []
 
     func run() async throws {
+        // `swx run [--release] file.swift args…` compiles and runs a script.
+        let isRelease = self.arguments.first == Self.releaseFlag
+        let rest = isRelease ? Array(self.arguments.dropFirst()) : self.arguments
+        if let script = rest.first, ScriptRunner.isScript(script) {
+            try await Self.runScript(URL(fileURLWithPath: script), arguments: Array(rest.dropFirst()), configuration: isRelease ? .release : .debug)
+        }
         try await Passthrough.run(["run"], arguments: self.arguments, resolution: .resolveFirst)
+    }
+
+    private static func runScript(_ script: URL, arguments: [String], configuration: BuildConfiguration) async throws -> Never {
+        let directory = script.deletingLastPathComponent()
+        try await CommandSupport.reportingErrors {
+            try await Toolchains().prepare(for: directory, missing: .install) { CommandSupport.status($0) }
+        }
+        let options = WorkspaceOptions(root: .package(directory), cacheDirectory: nil, maximumConcurrency: ResolverDefaults.concurrency, verbosity: .quiet)
+        let binary = try await CommandSupport.reportingErrors {
+            try await ScriptRunner(options: options).prepare(script: script, configuration: configuration)
+        }
+        ProcessRunner.exec([binary.path] + arguments)
     }
 }
 

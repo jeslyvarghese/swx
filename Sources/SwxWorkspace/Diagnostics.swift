@@ -32,7 +32,7 @@ public struct Diagnostics: Sendable {
 
     /// Runs every manifest seen by past resolutions through both the parser and `dump-package`.
     public func manifestParity(limit: Int?) async throws -> ManifestParityReport {
-        let toolchain = try await Toolchain.detect()
+        let toolchain = try await Toolchain.detect(store: self.store)
         let source = GitSource(store: self.store, maximumConcurrency: self.maximumConcurrency)
 
         // Pick the manifest SwiftPM would load at each cached revision.

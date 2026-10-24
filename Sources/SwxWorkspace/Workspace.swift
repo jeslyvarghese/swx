@@ -221,7 +221,7 @@ public struct Workspace: Sendable {
         previousState: WorkspaceState
     ) async throws -> ResolveReport {
         let layout = rootContext.layout
-        let toolchain = try await Toolchain.detect()
+        let toolchain = try await Toolchain.detect(store: self.store)
         let concurrency = self.options.maximumConcurrency
         let source = GitSource(store: self.store, maximumConcurrency: concurrency)
         let loader = ManifestLoader(store: self.store, toolchain: toolchain, maximumConcurrency: concurrency)

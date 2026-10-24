@@ -31,6 +31,7 @@ enum DumpPackageDecoder {
         static let enabledTraits = "enabledTraits"
         static let pluginUsages = "pluginUsages"
         static let plugin = "plugin"
+        static let type = "type"
     }
 
     private enum DependencyKind {
@@ -70,7 +71,7 @@ enum DumpPackageDecoder {
         let dependencies = try (json[Key.dependencies] as? [[String: Any]] ?? []).map(Self.dependency)
         let targets = (json[Key.targets] as? [[String: Any]] ?? []).map(Self.target)
         let products = (json[Key.products] as? [[String: Any]] ?? []).map {
-            Manifest.Product(name: $0[Key.name] as? String ?? "", targets: $0[Key.targets] as? [String] ?? [])
+            Manifest.Product(name: $0[Key.name] as? String ?? "", targets: $0[Key.targets] as? [String] ?? [], kind: Self.productKind($0[Key.type]))
         }
         // Sets in PackageDescription serialize in arbitrary order: normalize by sorting.
         let traits = (json[Key.traits] as? [[String: Any]] ?? []).map {
@@ -194,6 +195,14 @@ enum DumpPackageDecoder {
             return nil
         }
         return Manifest.Condition(traits: (json[Key.traits] as? [String])?.sorted())
+    }
+
+    /// `{"library": ["automatic"]}`, `{"executable": null}`, … → kind.
+    private static func productKind(_ json: Any?) -> Manifest.Product.Kind {
+        guard let (kind, _) = Self.enumCase(json as? [String: Any] ?? [:]) else {
+            return .library
+        }
+        return Manifest.Product.Kind(rawValue: kind) ?? .application
     }
 
     // MARK: Helpers

@@ -16,6 +16,7 @@ enum ResolverDefaults {
 /// Runs a resolve and prints a SwiftPM-style summary.
 enum ResolveRunner {
     static func run(mode: ResolveMode, global: GlobalOptions, workspace: Workspace? = nil) async throws {
+        try await CommandSupport.prepareToolchain(for: global)
         let clock = ContinuousClock()
         let started = clock.now
 
