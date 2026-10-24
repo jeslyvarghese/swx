@@ -13,7 +13,7 @@ public struct SwxCommand: AsyncParsableCommand {
         version: "0.1.0",
         subcommands: [
             PackageCommand.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
-            ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, DebugCommand.self,
+            ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
         ]
     )
 

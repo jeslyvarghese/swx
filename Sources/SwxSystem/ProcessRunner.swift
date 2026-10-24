@@ -119,6 +119,27 @@ public enum ProcessRunner {
         return ProcessResult(exitCode: exitCode, standardOutput: outputCollector.data, standardError: errorCollector.data)
     }
 
+    /// Runs a command with this process's stdin/stdout/stderr, returning its exit status.
+    public static func runStreaming(_ arguments: [String], in directory: URL? = nil) async throws -> Int32 {
+        Trace.event("stream \(arguments.prefix(4).joined(separator: " "))")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: Self.environmentLauncher)
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+
+        return try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { finished in
+                continuation.resume(returning: finished.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
     /// Replaces the current process image (used for pass-through commands).
     public static func exec(_ arguments: [String]) -> Never {
         let cArguments = arguments.map { strdup($0) } + [nil]

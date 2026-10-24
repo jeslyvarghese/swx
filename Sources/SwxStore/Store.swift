@@ -12,6 +12,7 @@ import SwxSystem
 /// revisions/<sha>.json   root manifest files at a commit (commits are immutable)
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
+/// cas/                   shared compilation cache, when the toolchain supports it
 /// ```
 /// No other module knows this layout; everyone asks the store for paths.
 public struct Store: Sendable {
@@ -23,6 +24,7 @@ public struct Store: Sendable {
         case tools
         case scripts
         case toolchains
+        case cas
         case temporary = "tmp"
     }
 
@@ -97,6 +99,11 @@ public struct Store: Sendable {
     /// The generated package for a script, keyed by script content and toolchain.
     public func scriptPath(key: String) -> URL {
         self.directory(.scripts).appendingPathComponent(key, isDirectory: true)
+    }
+
+    /// The content-addressed compilation cache shared by all builds.
+    public var compilationCachePath: URL {
+        self.directory(.cas)
     }
 
     /// `swift --version` output for a toolchain fingerprint.

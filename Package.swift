@@ -34,7 +34,24 @@ let package = Package(
         // Orchestration: resolved file, workspace state, resolution driver.
         .target(
             name: "SwxWorkspace",
-            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain"]
+            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain", "SwxBuild", "SwxApple", "SwxDevice"]
+        ),
+
+        // Build drivers: SwiftPM for the host, xcodebuild for Apple platforms (both run swift-build).
+        .target(
+            name: "SwxBuild",
+            dependencies: ["SwxApple", "SwxSystem"]
+        ),
+
+        // Apple platforms and destinations (pure model).
+        .target(
+            name: "SwxApple"
+        ),
+
+        // Simulators and devices: the only module that launches apps.
+        .target(
+            name: "SwxDevice",
+            dependencies: ["SwxApple", "SwxSystem"]
         ),
 
         // Installs and selects Swift toolchains (`.swift-version`).
@@ -99,5 +116,6 @@ let package = Package(
         .testTarget(name: "SwxWorkspaceTests", dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"]),
         .testTarget(name: "SwxXcodeTests", dependencies: ["SwxCore", "SwxXcode"]),
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
+        .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
     ]
 )

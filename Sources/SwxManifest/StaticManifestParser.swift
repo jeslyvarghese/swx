@@ -44,7 +44,9 @@ public enum StaticManifestParser {
     }
 
     /// Imports a declarative manifest may use.
-    private static let allowedImports: Set<String> = [Name.packageDescription, Name.foundation, "CompilerPluginSupport"]
+    /// `AppleProductTypes` (Xcode / Swift Playgrounds apps) can't be evaluated by the command-line
+    /// SwiftPM at all, so reading it statically is the only way to resolve such packages.
+    private static let allowedImports: Set<String> = [Name.packageDescription, Name.foundation, "CompilerPluginSupport", "AppleProductTypes"]
 
     /// Why the parser declined a manifest (for diagnostics; declining is always safe).
     public struct Decline: Error, Sendable, CustomStringConvertible {
@@ -468,7 +470,7 @@ public enum StaticManifestParser {
         // MARK: Products and targets
 
         private static let productKinds: [String: Manifest.Product.Kind] = [
-            "library": .library, "executable": .executable, "plugin": .plugin,
+            "library": .library, "executable": .executable, "plugin": .plugin, "iOSApplication": .application,
         ]
         private static let targetKinds: Set<String> = ["target", "executableTarget", "testTarget", "plugin", "macro", "systemLibrary", "binaryTarget"]
 

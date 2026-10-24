@@ -161,6 +161,29 @@ struct StaticManifestParserTests {
         #expect(manifest?.targets.map(\.name) == ["A"])
     }
 
+    @Test func readsAppleProductTypesApplications() throws {
+        let manifest = try #require(parse("""
+        import AppleProductTypes
+
+        let package = Package(
+            name: "HelloApp",
+            platforms: [.iOS("17.0")],
+            products: [
+                .iOSApplication(
+                    name: "HelloApp",
+                    targets: ["AppModule"],
+                    bundleIdentifier: "dev.swx.HelloApp",
+                    appIcon: .placeholder(icon: .bunny),
+                    supportedDeviceFamilies: [.pad, .phone],
+                    supportedInterfaceOrientations: [.portrait]
+                ),
+            ],
+            targets: [.executableTarget(name: "AppModule", path: ".")]
+        )
+        """))
+        #expect(manifest.products == [Manifest.Product(name: "HelloApp", targets: ["AppModule"], kind: .application)])
+    }
+
     // MARK: Declining (always safe)
 
     @Test(arguments: [

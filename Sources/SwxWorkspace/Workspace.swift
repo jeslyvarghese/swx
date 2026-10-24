@@ -52,6 +52,8 @@ public enum WorkspaceRoot: Sendable {
     /// An `.xcodeproj` or `.xcworkspace`: pins in its shared data, checkouts in `sourcePackages`
     /// (hand that directory to `xcodebuild -clonedSourcePackagesDirPath`).
     case xcodeProject(URL, sourcePackages: URL)
+    /// A package built by xcodebuild: pins in its `Package.resolved`, checkouts in `sourcePackages`.
+    case packageForXcode(URL, sourcePackages: URL)
 }
 
 public struct WorkspaceOptions: Sendable {
@@ -116,21 +118,11 @@ public struct Workspace: Sendable {
     private func rootContext() async throws -> RootContext {
         switch self.options.root {
         case .package(let directory):
-            // SwiftPM: originHash is the SHA-256 of the root manifest's bytes.
-            let manifestURL = directory.appendingPathComponent(WellKnownFile.manifest)
-            guard let data = FileSystem.readIfPresent(manifestURL) else {
-                throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(directory.path)")
-            }
-            let layout = Layout(
-                resolvedFile: directory.appendingPathComponent(WellKnownFile.packageResolved),
-                stateDirectory: directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
-            )
-            return RootContext(
-                reference: PackageReference(identity: PackageIdentity(location: directory.path), kind: .root(path: directory.path)),
-                originHash: ContentHash.sha256(data),
-                layout: layout,
-                source: .package(directory)
-            )
+            return try Self.packageContext(directory, stateDirectory: directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true))
+
+        case .packageForXcode(let directory, let sourcePackages):
+            // Same pins and origin hash as SwiftPM; only the checkout location differs.
+            return try Self.packageContext(directory, stateDirectory: sourcePackages)
 
         case .xcodeProject(let url, let sourcePackages):
             // Xcode passes its package references as root dependencies, so SwiftPM hashes their locations.
@@ -151,6 +143,21 @@ public struct Workspace: Sendable {
                 source: .xcode(manifest)
             )
         }
+    }
+
+    /// SwiftPM: originHash is the SHA-256 of the root manifest's bytes.
+    private static func packageContext(_ directory: URL, stateDirectory: URL) throws -> RootContext {
+        let manifestURL = directory.appendingPathComponent(WellKnownFile.manifest)
+        guard let data = FileSystem.readIfPresent(manifestURL) else {
+            throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(directory.path)")
+        }
+        let layout = Layout(resolvedFile: directory.appendingPathComponent(WellKnownFile.packageResolved), stateDirectory: stateDirectory)
+        return RootContext(
+            reference: PackageReference(identity: PackageIdentity(location: directory.path), kind: .root(path: directory.path)),
+            originHash: ContentHash.sha256(data),
+            layout: layout,
+            source: .package(directory)
+        )
     }
 
     /// An Xcode package reference as a manifest dependency.
