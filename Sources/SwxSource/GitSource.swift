@@ -121,6 +121,13 @@ public actor GitSource {
         return result
     }
 
+    /// Manifest files of every revision seen so far (a free corpus for parity testing).
+    public nonisolated func cachedManifestFiles() -> [ManifestFiles] {
+        self.store.revisionManifestPaths().compactMap { url in
+            FileSystem.readIfPresent(url).flatMap { try? JSONDecoder().decode(ManifestFiles.self, from: $0) }
+        }
+    }
+
     private static func isManifestFile(_ name: String) -> Bool {
         name == WellKnownFile.manifest
             || (name.hasPrefix(WellKnownFile.versionSpecificPrefix) && name.hasSuffix(WellKnownFile.swiftExtension))

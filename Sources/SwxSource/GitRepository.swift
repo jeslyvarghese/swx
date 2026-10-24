@@ -32,6 +32,22 @@ struct GitRepository: Sendable {
     /// Never block on credential prompts; fail fast instead.
     private static let nonInteractive = [Git.terminalPromptVariable: "0"]
 
+    /// Network operations get one more attempt: transient server or connection hiccups are common.
+    private static let networkAttempts = 2
+
+    @discardableResult
+    private static func withNetworkRetry<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
+        var lastError: Error?
+        for _ in 0..<Self.networkAttempts {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError!
+    }
+
     let url: String
     let path: URL
 
@@ -39,7 +55,9 @@ struct GitRepository: Sendable {
 
     /// Lists tags without cloning: one request to the server.
     static func listRemoteTags(url: String) async throws -> [RemoteTag] {
-        let result = try await ProcessRunner.run([Git.executable, "ls-remote", "--tags", url], environment: Self.nonInteractive)
+        let result = try await Self.withNetworkRetry {
+            try await ProcessRunner.run([Git.executable, "ls-remote", "--tags", url], environment: Self.nonInteractive)
+        }
         return Self.parseTags(result.output)
     }
 
@@ -87,16 +105,21 @@ struct GitRepository: Sendable {
     /// Creates the blobless bare clone, publishing it atomically.
     func clone(using store: Store) async throws {
         let staging = try store.makeTemporaryDirectory().appendingPathComponent(self.path.lastPathComponent)
-        try await ProcessRunner.run(
-            [Git.executable, "clone", "--bare", "--quiet", Git.blobFilter, self.url, staging.path],
-            environment: Self.nonInteractive
-        )
+        try await Self.withNetworkRetry {
+            try? FileSystem.removeTree(staging)
+            try await ProcessRunner.run(
+                [Git.executable, "clone", "--bare", "--quiet", Git.blobFilter, self.url, staging.path],
+                environment: Self.nonInteractive
+            )
+        }
         try FileSystem.moveIntoPlace(staging, self.path)
     }
 
     /// Fetches new commits and tags (still without blobs).
     func fetch() async throws {
-        try await self.git(["fetch", "--quiet", "--tags", "--force", Git.blobFilter, "origin"])
+        try await Self.withNetworkRetry {
+            try await self.git(["fetch", "--quiet", "--tags", "--force", Git.blobFilter, "origin"])
+        }
     }
 
     /// The subset of `revisions` whose commits are not in the local repository.
@@ -150,11 +173,11 @@ struct GitRepository: Sendable {
 
         // One round trip for everything missing.
         if !missing.isEmpty {
-            try await self.git(
+            try await Self.withNetworkRetry { try await self.git(
                 ["-c", "fetch.negotiationAlgorithm=noop", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
                  "--recurse-submodules=no", Git.blobFilter, "--stdin", "origin"],
                 input: missing
-            )
+            ) }
         }
 
         // Read them all through one `cat-file --batch`.

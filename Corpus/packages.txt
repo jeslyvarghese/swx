@@ -1,0 +1,25 @@
+# Popular Swift packages used for differential testing (resolver + static manifest parser).
+https://github.com/pointfreeco/swift-composable-architecture.git
+https://github.com/Alamofire/Alamofire.git
+https://github.com/apple/swift-openapi-generator.git
+https://github.com/grpc/grpc-swift.git
+https://github.com/swift-server/swift-aws-lambda-runtime.git
+https://github.com/realm/SwiftLint.git
+https://github.com/swiftlang/swift-format.git
+https://github.com/onevcat/Kingfisher.git
+https://github.com/hummingbird-project/hummingbird.git
+https://github.com/swiftlang/swift-markdown.git
+https://github.com/apple/swift-async-algorithms.git
+https://github.com/pointfreeco/swift-snapshot-testing.git
+https://github.com/apple/swift-protobuf.git
+https://github.com/swift-server/async-http-client.git
+https://github.com/apple/swift-distributed-actors.git
+https://github.com/groue/GRDB.swift.git
+https://github.com/SDWebImage/SDWebImage.git
+https://github.com/apple/swift-certificates.git
+https://github.com/swiftlang/swift-docc.git
+https://github.com/soto-project/soto.git
+https://github.com/apple/swift-container-plugin.git
+https://github.com/Quick/Quick.git
+https://github.com/apple/swift-openapi-runtime.git
+https://github.com/tuist/XcodeProj.git

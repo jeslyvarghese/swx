@@ -2,6 +2,7 @@ import SwxCore
 import SwxManifest
 import SwxResolver
 import SwxSource
+import SwxSystem
 
 /// Answers solver requests, memoizing each one as a task so that prefetches started
 /// early are simply awaited when the solver later requires them.
@@ -11,7 +12,7 @@ actor FactProvider {
     private let toolchain: Toolchain
 
     private var versionTasks: [PackageIdentity: Task<[TaggedVersion], Error>] = [:]
-    private var dependencyTasks: [PackageVersionKey: Task<DependencyFacts, Never>] = [:]
+    private var dependencyTasks: [PackageVersionKey: Task<DependencyFacts, Error>] = [:]
     private var revisions: [PackageIdentity: [Version: String]] = [:]
 
     /// Traits requested for each package by its dependents (default: `default`).
@@ -54,8 +55,8 @@ actor FactProvider {
         return tagged
     }
 
-    func dependencies(of package: PackageReference, at version: Version) async -> DependencyFacts {
-        await self.dependenciesTask(for: package, at: version).value
+    func dependencies(of package: PackageReference, at version: Version) async throws -> DependencyFacts {
+        try await self.dependenciesTask(for: package, at: version).value
     }
 
     /// The commit behind `version`, once the version list is known.
@@ -110,23 +111,26 @@ actor FactProvider {
         return task
     }
 
-    private func dependenciesTask(for package: PackageReference, at version: Version) -> Task<DependencyFacts, Never> {
+    private func dependenciesTask(for package: PackageReference, at version: Version) -> Task<DependencyFacts, Error> {
         let key = PackageVersionKey(package: package.identity, version: version)
         if let existing = self.dependencyTasks[key] {
             return existing
         }
-        let task = Task { await self.loadDependencies(of: package, at: version) }
+        let task = Task { try await self.loadDependencies(of: package, at: version) }
         self.dependencyTasks[key] = task
         return task
     }
 
     /// Reads and evaluates the manifest at a tagged version, then prunes its dependencies.
-    private func loadDependencies(of package: PackageReference, at version: Version) async -> DependencyFacts {
+    ///
+    /// Like SwiftPM, only an incompatible tools version rules a version out; any other failure
+    /// (network, git, a broken manifest) aborts resolution rather than silently picking another version.
+    private func loadDependencies(of package: PackageReference, at version: Version) async throws -> DependencyFacts {
         do {
             // Map the version to its commit.
             _ = try await self.versions(of: package)
             guard let revision = self.revisions[package.identity]?[version] else {
-                return .unavailable(reason: "no tag for version \(version)")
+                throw WorkspaceError(description: "no tag for \(package.identity) \(version)")
             }
 
             // The version being considered is usually the one chosen: start its checkout now.
@@ -139,7 +143,7 @@ actor FactProvider {
                 current: self.toolchain.toolsVersion,
                 contentsOf: { files.files[$0] }
             ), let contents = files.files[manifestName] else {
-                return .unavailable(reason: "no Package.swift at \(version)")
+                throw WorkspaceError(description: "\(package.identity) has no Package.swift at \(version)")
             }
             let declaredToolsVersion = ToolsVersion.parse(manifest: contents)
             guard declaredToolsVersion <= self.toolchain.toolsVersion else {
@@ -154,7 +158,7 @@ actor FactProvider {
             var declarations: [DependencyDeclaration] = []
             for dependency in required {
                 guard let declaration = dependency.declaration else {
-                    return .unavailable(reason: "registry dependency '\(dependency.identity)' is not supported yet")
+                    throw WorkspaceError(description: "\(package.identity) \(version): registry dependency '\(dependency.identity)' is not supported yet")
                 }
                 self.noteTraits(dependency.traits, for: declaration.package.identity)
                 declarations.append(declaration)
@@ -163,8 +167,10 @@ actor FactProvider {
             // Walk ahead of the solver: the whole graph streams in instead of level by level.
             self.speculate(on: declarations)
             return .available(declarations)
+        } catch let error as WorkspaceError {
+            throw error
         } catch {
-            return .unavailable(reason: String(describing: error))
+            throw WorkspaceError(description: "\(package.identity) \(version): \(error)")
         }
     }
 }

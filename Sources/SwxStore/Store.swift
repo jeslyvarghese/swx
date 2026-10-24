@@ -72,6 +72,13 @@ public struct Store: Sendable {
         self.directory(.revisions).appendingPathComponent(revision).appendingPathExtension(Self.jsonExtension)
     }
 
+    /// Every cached per-revision manifest record.
+    public func revisionManifestPaths() -> [URL] {
+        let directory = self.directory(.revisions)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.sorted().map { directory.appendingPathComponent($0) }
+    }
+
     /// A fresh scratch directory inside the store (same volume, so renames are atomic).
     public func makeTemporaryDirectory() throws -> URL {
         let url = self.directory(.temporary).appendingPathComponent(UUID().uuidString, isDirectory: true)

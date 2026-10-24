@@ -12,6 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto", "3.0.0"..<"5.0.0"),
+        .package(url: "https://github.com/swiftlang/swift-syntax", "600.0.0"..<"700.0.0"),
     ],
     targets: [
         // Executable: thin entry point that hands off to SwxCLI.
@@ -45,7 +46,13 @@ let package = Package(
         // Manifest model, dependency pruning, evaluation and cache.
         .target(
             name: "SwxManifest",
-            dependencies: ["SwxCore", "SwxStore", "SwxSystem"]
+            dependencies: [
+                "SwxCore",
+                "SwxStore",
+                "SwxSystem",
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
+            ]
         ),
 
         // Source providers: the only layer that talks to git or the network.

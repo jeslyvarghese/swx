@@ -72,9 +72,10 @@ enum DumpPackageDecoder {
         let products = (json[Key.products] as? [[String: Any]] ?? []).map {
             Manifest.Product(name: $0[Key.name] as? String ?? "", targets: $0[Key.targets] as? [String] ?? [])
         }
+        // Sets in PackageDescription serialize in arbitrary order: normalize by sorting.
         let traits = (json[Key.traits] as? [[String: Any]] ?? []).map {
-            Manifest.Trait(name: $0[Key.name] as? String ?? "", enabledTraits: $0[Key.enabledTraits] as? [String] ?? [])
-        }
+            Manifest.Trait(name: $0[Key.name] as? String ?? "", enabledTraits: ($0[Key.enabledTraits] as? [String] ?? []).sorted())
+        }.sorted { $0.name < $1.name }
 
         return Manifest(
             name: json[Key.name] as? String ?? "",
@@ -96,7 +97,7 @@ enum DumpPackageDecoder {
 
         let identity = settings[Key.identity] as? String ?? ""
         let explicitName = settings[Key.explicitName] as? String
-        let traits = (settings[Key.traits] as? [[String: Any]])?.compactMap { $0[Key.name] as? String } ?? [Manifest.defaultTrait]
+        let traits = ((settings[Key.traits] as? [[String: Any]])?.compactMap { $0[Key.name] as? String } ?? [Manifest.defaultTrait]).sorted()
 
         switch kind {
         case DependencyKind.sourceControl:
@@ -192,7 +193,7 @@ enum DumpPackageDecoder {
         guard values.count > position, let json = values[position] as? [String: Any] else {
             return nil
         }
-        return Manifest.Condition(traits: json[Key.traits] as? [String])
+        return Manifest.Condition(traits: (json[Key.traits] as? [String])?.sorted())
     }
 
     // MARK: Helpers

@@ -241,7 +241,7 @@ public struct Workspace: Sendable {
             let tagged = try await facts.versions(of: package)
             return .versions(package.identity, tagged.map(\.version))
         case .dependencies(let package, let version):
-            return .dependencies(package.identity, version, await facts.dependencies(of: package, at: version))
+            return .dependencies(package.identity, version, try await facts.dependencies(of: package, at: version))
         }
     }
 

@@ -11,7 +11,7 @@ public struct SwxCommand: AsyncParsableCommand {
         commandName: "swx",
         abstract: "A fast, drop-in companion to SwiftPM.",
         version: "0.1.0",
-        subcommands: [PackageCommand.self, Resolve.self, Update.self]
+        subcommands: [PackageCommand.self, Resolve.self, Update.self, DebugCommand.self]
     )
 
     public init() {}

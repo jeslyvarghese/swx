@@ -38,6 +38,11 @@ public actor ManifestLoader {
     private static let cacheFormatVersion = "1"
     private static let evaluationPrefix = "swx-manifest"
 
+    /// `SWX_STATIC_MANIFESTS=0` forces real evaluation for every manifest (for debugging).
+    private static let staticParsingVariable = "SWX_STATIC_MANIFESTS"
+    private static let disabledValue = "0"
+    private static let usesStaticParsing = ProcessInfo.processInfo.environment[staticParsingVariable] != disabledValue
+
     private let store: Store
     private let toolchain: Toolchain
     private let limiter: ConcurrencyLimiter
@@ -57,9 +62,16 @@ public actor ManifestLoader {
         if let running = self.inFlight[key] {
             return try await running.value
         }
+        let environment = CompilationEnvironment.host(compilerVersion: self.toolchain.toolsVersion)
         let task = Task { [store, limiter] in
             if let cached = Self.readCache(store.manifestPath(key: key)) {
                 return cached
+            }
+
+            // Declarative manifests are read directly; only the rest pay for a compile.
+            if Self.usesStaticParsing, let parsed = StaticManifestParser.parse(contents, environment: environment) {
+                Trace.event("manifest: static parse")
+                return parsed
             }
             let manifest = try await limiter.run { try await Self.evaluate(contents: contents) }
             try? FileSystem.writeAtomically(try JSONEncoder().encode(manifest), to: store.manifestPath(key: key))
@@ -80,6 +92,10 @@ public actor ManifestLoader {
         if let cached = Self.readCache(self.store.manifestPath(key: key)) {
             return cached
         }
+        let environment = CompilationEnvironment.host(compilerVersion: self.toolchain.toolsVersion)
+        if Self.usesStaticParsing, let parsed = StaticManifestParser.parse(contents, packageDirectory: directory, environment: environment) {
+            return parsed
+        }
         let manifest = try await self.limiter.run { try await Self.dumpPackage(at: directory) }
         try? FileSystem.writeAtomically(try JSONEncoder().encode(manifest), to: self.store.manifestPath(key: key))
         return manifest
@@ -88,7 +104,7 @@ public actor ManifestLoader {
     // MARK: Evaluation
 
     /// Writes the manifest into a scratch package and asks SwiftPM to evaluate it.
-    private static func evaluate(contents: String) async throws -> Manifest {
+    static func evaluate(contents: String) async throws -> Manifest {
         let directory = try FileSystem.makeTemporaryDirectory(prefix: Self.evaluationPrefix)
         defer { try? FileSystem.removeTree(directory) }
 
@@ -96,16 +112,27 @@ public actor ManifestLoader {
         return try await Self.dumpPackage(at: directory)
     }
 
+    /// Evaluation can fail transiently under heavy parallel load (SwiftPM's own cache locks), so try twice.
+    private static let evaluationAttempts = 2
+
     private static func dumpPackage(at directory: URL) async throws -> Manifest {
-        let result = try await ProcessRunner.run(
-            ["swift", "package", "dump-package", "--package-path", directory.path],
-            exitPolicy: .allowFailure
-        )
+        var result = try await Self.runDumpPackage(at: directory)
+        for _ in 1..<Self.evaluationAttempts where !result.succeeded {
+            Trace.event("dump-package retry: \(result.errorOutput.prefix(200))")
+            result = try await Self.runDumpPackage(at: directory)
+        }
         guard result.succeeded else {
             let message = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
             throw ManifestError(description: message.isEmpty ? "manifest evaluation failed" : message)
         }
         return try DumpPackageDecoder.decode(result.standardOutput)
+    }
+
+    private static func runDumpPackage(at directory: URL) async throws -> ProcessResult {
+        try await ProcessRunner.run(
+            ["swift", "package", "dump-package", "--package-path", directory.path],
+            exitPolicy: .allowFailure
+        )
     }
 
     // MARK: Cache
