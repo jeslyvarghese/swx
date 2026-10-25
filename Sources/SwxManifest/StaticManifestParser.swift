@@ -371,11 +371,19 @@ public enum StaticManifestParser {
 
             // Source control.
             guard let urlExpression = arguments[Label.url], let url = self.string(urlExpression),
-                  let requirement = self.requirement(arguments) else { return nil }
+                  let requirement = self.requirement(arguments),
+                  let kind = PackageKind.sourceControl(location: url) else { return nil }
+            let location: Manifest.Dependency.Location
+            switch kind {
+            case .localSourceControl(let path):
+                location = .localSourceControl(path: path)
+            default:
+                location = .remote(url: url)
+            }
             return Manifest.Dependency(
                 identity: PackageIdentity(location: url).description,
                 explicitName: explicitName,
-                location: .remote(url: url),
+                location: location,
                 requirement: requirement,
                 traits: traits
             )

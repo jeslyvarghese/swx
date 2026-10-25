@@ -7,7 +7,7 @@ import SwxSystem
 /// Layout (under `~/.cache/swx` or `$XDG_CACHE_HOME/swx` or `$SWX_CACHE_DIR`):
 /// ```
 /// git/<name>-<hash>/     bare partial clones, one per repository URL
-/// src/<revision>/        immutable exported source trees
+/// trees/<revision>/      immutable exported source trees, submodules included
 /// manifests/<key>.json   evaluated manifest summaries
 /// revisions/<sha>.json   root manifest files at a commit (commits are immutable)
 /// artifacts/<checksum>/  extracted binary-target archives, keyed by their SHA-256
@@ -19,7 +19,8 @@ import SwxSystem
 public struct Store: Sendable {
     private enum Directory: String {
         case git
-        case src
+        /// Renamed from `src` when trees started including submodules, so older trees aren't reused.
+        case sourceTrees = "trees"
         case manifests
         case revisions
         case artifacts
@@ -69,7 +70,7 @@ public struct Store: Sendable {
 
     /// The immutable source tree exported at `revision`.
     public func sourceTreePath(revision: String) -> URL {
-        self.directory(.src).appendingPathComponent(revision, isDirectory: true)
+        self.directory(.sourceTrees).appendingPathComponent(revision, isDirectory: true)
     }
 
     public func manifestPath(key: String) -> URL {

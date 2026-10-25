@@ -46,7 +46,38 @@ public struct PackageIdentity: Sendable, Hashable, Comparable, CustomStringConve
 public enum PackageKind: Sendable, Hashable {
     case root(path: String)
     case fileSystem(path: String)
+    /// A git repository on disk (`.package(url: "file:///…")` or an absolute path).
+    case localSourceControl(path: String)
     case remoteSourceControl(url: String)
+
+    private static let fileScheme = "file://"
+    private static let absolutePathPrefix = "/"
+    private static let relativePathPrefix = "."
+
+    /// SwiftPM's split for `.package(url:)`: file URLs and absolute paths name local repositories.
+    /// Returns `nil` for relative paths, whose base only the manifest's directory knows.
+    public static func sourceControl(location: String) -> PackageKind? {
+        if location.hasPrefix(Self.fileScheme) {
+            return .localSourceControl(path: String(location.dropFirst(Self.fileScheme.count)))
+        }
+        if location.hasPrefix(Self.absolutePathPrefix) {
+            return .localSourceControl(path: location)
+        }
+        guard !location.hasPrefix(Self.relativePathPrefix) else { return nil }
+        return .remoteSourceControl(url: location)
+    }
+
+    /// What `git` clones from, for source-control packages.
+    public var sourceControlLocation: String? {
+        switch self {
+        case .remoteSourceControl(let url):
+            return url
+        case .localSourceControl(let path):
+            return path
+        case .root, .fileSystem:
+            return nil
+        }
+    }
 
     /// The value SwiftPM writes as `"kind"` in `Package.resolved` and workspace state.
     public var serializedName: String {
@@ -55,6 +86,8 @@ public enum PackageKind: Sendable, Hashable {
             return "root"
         case .fileSystem:
             return "fileSystem"
+        case .localSourceControl:
+            return "localSourceControl"
         case .remoteSourceControl:
             return "remoteSourceControl"
         }
@@ -62,7 +95,7 @@ public enum PackageKind: Sendable, Hashable {
 
     public var location: String {
         switch self {
-        case .root(let path), .fileSystem(let path):
+        case .root(let path), .fileSystem(let path), .localSourceControl(let path):
             return path
         case .remoteSourceControl(let url):
             return url

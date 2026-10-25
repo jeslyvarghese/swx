@@ -141,7 +141,8 @@ enum DumpPackageDecoder {
             let url = (payload.first as? [String: Any])?[Key.urlString] as? String ?? payload.first as? String ?? ""
             return .remote(url: url)
         default:
-            return .local(path: payload.first as? String ?? "")
+            // `{"local": [path]}`: a git repository on disk, still versioned.
+            return .localSourceControl(path: payload.first as? String ?? "")
         }
     }
 

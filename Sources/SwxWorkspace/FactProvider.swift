@@ -105,7 +105,7 @@ actor FactProvider {
     func speculate(on declarations: [DependencyDeclaration]) {
         for declaration in declarations {
             guard case .version(let requirement) = declaration.requirement,
-                  case .remoteSourceControl = declaration.package.kind else { continue }
+                  declaration.package.kind.sourceControlLocation != nil else { continue }
             let versions = self.versionsTask(for: declaration.package)
 
             Task {

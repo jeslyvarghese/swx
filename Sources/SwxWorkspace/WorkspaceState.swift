@@ -404,6 +404,8 @@ public struct WorkspaceState: Sendable {
             switch self.packageRef.kind {
             case PackageKind.remoteSourceControl(url: "").serializedName:
                 kind = .remoteSourceControl(url: self.packageRef.location)
+            case PackageKind.localSourceControl(path: "").serializedName:
+                kind = .localSourceControl(path: self.packageRef.location)
             case PackageKind.fileSystem(path: "").serializedName:
                 kind = .fileSystem(path: self.packageRef.location)
             default:

@@ -36,6 +36,9 @@ public struct Manifest: Sendable, Codable, Hashable {
     public struct Dependency: Sendable, Codable, Hashable {
         public enum Location: Sendable, Codable, Hashable {
             case remote(url: String)
+            /// A git repository on disk, versioned by its tags.
+            case localSourceControl(path: String)
+            /// A path dependency (`.package(path:)`), unversioned.
             case local(path: String)
             case registry(identity: String)
         }
@@ -72,7 +75,7 @@ public struct Manifest: Sendable, Codable, Hashable {
             switch self.location {
             case .remote(let url):
                 return PackageIdentity.defaultName(fromLocation: url)
-            case .local(let path):
+            case .local(let path), .localSourceControl(let path):
                 return PackageIdentity.defaultName(fromLocation: path)
             case .registry(let identity):
                 return identity

@@ -151,6 +151,8 @@ extension Manifest.Dependency {
         switch self.location {
         case .remote(let url):
             reference = PackageReference(identity: PackageIdentity(plain: self.identity), kind: .remoteSourceControl(url: url))
+        case .localSourceControl(let path):
+            reference = PackageReference(identity: PackageIdentity(plain: self.identity), kind: .localSourceControl(path: path))
         case .local(let path):
             reference = PackageReference(identity: PackageIdentity(plain: self.identity), kind: .fileSystem(path: path))
         case .registry:

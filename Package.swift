@@ -122,5 +122,6 @@ let package = Package(
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
         .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
+        .testTarget(name: "SwxSourceTests", dependencies: ["SwxCore", "SwxSource"]),
     ]
 )

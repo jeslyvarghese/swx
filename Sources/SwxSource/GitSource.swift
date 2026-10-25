@@ -50,7 +50,7 @@ public actor GitSource {
     /// Also starts the blobless clone in the background, since reading manifests will need it.
     public func versions(of package: PackageReference, toolsVersion: ToolsVersion) async throws -> [TaggedVersion] {
         let url = try Self.remoteURL(of: package)
-        _ = self.repository(for: package, url: url)
+        _ = self.repository(url: url, name: package.name)
 
         let tags = try await self.limiter.run { try await GitRepository.listRemoteTags(url: url) }
         return Self.versionMap(tags: tags, toolsVersion: toolsVersion)
@@ -168,12 +168,35 @@ public actor GitSource {
         return Task { [store, limiter] in
             let repository = try await self.ensureRevisions([revision], of: package)
 
-            // Export into staging, freeze it, then publish atomically.
+            // Export into staging (with submodules, like SwiftPM's checkouts), freeze it, then publish atomically.
             let staging = try store.makeTemporaryDirectory().appendingPathComponent(revision)
             try await limiter.run { try await repository.export(revision: revision, to: staging) }
+            try await self.exportSubmodules(of: repository, revision: revision, into: staging)
             FileSystem.makeReadOnly(staging)
             try FileSystem.moveIntoPlace(staging, destination)
             return destination
+        }
+    }
+
+    // MARK: Submodules
+
+    /// `git submodule update --init --recursive`, from the store's blobless repositories.
+    private func exportSubmodules(of repository: GitRepository, revision: String, into tree: URL) async throws {
+        let submodules = try await repository.submodules(at: revision, exportedTo: tree)
+        guard !submodules.isEmpty else { return }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for submodule in submodules {
+                group.addTask {
+                    let url = GitRepository.resolveSubmoduleURL(submodule.url, relativeTo: repository.url)
+                    let child = try await self.ensureRevisions([submodule.commit], url: url, name: PackageIdentity.defaultName(fromLocation: url))
+                    let destination = tree.appendingPathComponent(submodule.path, isDirectory: true)
+
+                    try await self.limiter.run { try await child.export(revision: submodule.commit, to: destination) }
+                    try await self.exportSubmodules(of: child, revision: submodule.commit, into: destination)
+                }
+            }
+            try await group.waitForAll()
         }
     }
 
@@ -181,8 +204,11 @@ public actor GitSource {
 
     /// The repository, cloned if needed, and fetched if any revision is missing locally.
     private func ensureRevisions(_ revisions: [String], of package: PackageReference) async throws -> GitRepository {
-        let url = try Self.remoteURL(of: package)
-        let repository = try await self.repository(for: package, url: url).value
+        try await self.ensureRevisions(revisions, url: try Self.remoteURL(of: package), name: package.name)
+    }
+
+    private func ensureRevisions(_ revisions: [String], url: String, name: String) async throws -> GitRepository {
+        let repository = try await self.repository(url: url, name: name).value
 
         // Fetch once if something is missing (new tags since the clone), sharing the work.
         guard try await !repository.missingCommits(revisions).isEmpty else {
@@ -190,6 +216,10 @@ public actor GitSource {
         }
         try await self.refresh(repository)
 
+        // Commits no tag reaches (branch pins, submodule pins) are fetched by id.
+        for missing in try await repository.missingCommits(revisions) {
+            try await self.limiter.run { try await repository.fetchCommit(missing) }
+        }
         if let missing = try await repository.missingCommits(revisions).first {
             throw SourceError(description: "revision \(missing) not found in \(url)")
         }
@@ -210,11 +240,11 @@ public actor GitSource {
         try await task.value
     }
 
-    private func repository(for package: PackageReference, url: String) -> Task<GitRepository, Error> {
+    private func repository(url: String, name: String) -> Task<GitRepository, Error> {
         if let existing = self.repositoryReady[url] {
             return existing
         }
-        let repository = GitRepository(url: url, path: self.store.repositoryPath(for: url, name: package.name))
+        let repository = GitRepository(url: url, path: self.store.repositoryPath(for: url, name: name))
         let task = Task { [store, limiter] in
             if !repository.exists {
                 try await limiter.run { try await repository.clone(using: store) }
@@ -226,7 +256,7 @@ public actor GitSource {
     }
 
     private static func remoteURL(of package: PackageReference) throws -> String {
-        guard case .remoteSourceControl(let url) = package.kind else {
+        guard let url = package.kind.sourceControlLocation else {
             throw SourceError(description: "\(package.identity) is not a source-control package")
         }
         return url

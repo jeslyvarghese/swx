@@ -182,6 +182,11 @@ These areas are verified byte for byte against SwiftPM or Xcode:
   - pre-release range semantics
   - the PubGrub decision heuristics
 - **Mirrors** (`.swiftpm/configuration/mirrors.json` and `~/.swiftpm`): `swx` fetches from the mirror and records the original in the lockfile.
+- **Git submodules and Git LFS in dependencies,** like SwiftPM's checkouts:
+  - submodules are checked out recursively (`update = none` is honoured), each from its own blobless store repository
+  - LFS files are fetched once into the store and replaced in the tree (needs `git-lfs`, as SwiftPM does)
+  - relative submodule URLs resolve against the package's URL, as git does; SwiftPM resolves them against its local cache, where they fail
+- **Local git repositories** (`.package(url: "file:///…")` or an absolute path) are recorded as `localSourceControl`, by path, as SwiftPM does.
 - **swift-syntax prebuilts:** SwiftPM still applies them after `swx` resolves. A macro build took 3.5 s of CPU instead of 55 s.
 - **Mixed use:**
   - `swift package update` works on top of `swx` checkouts.
@@ -190,9 +195,11 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 74 unit tests
+swift test                                            # 82 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
+Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
+Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```
@@ -223,7 +230,6 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 ## Not yet supported
 
 - **Package registries** (SE-0292), and `.netrc` auth for HTTPS git.
-- **Git submodules inside dependencies.**
 - **`.artifactbundleindex` binary targets** are left to SwiftPM, which picks the archive for the host.
 - **Multi-root workspaces.**
 

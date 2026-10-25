@@ -150,7 +150,9 @@ public struct ResolvedFile: Sendable, Hashable {
             switch self.kind {
             case PackageKind.remoteSourceControl(url: "").serializedName:
                 kind = .remoteSourceControl(url: self.location)
-            case PackageKind.fileSystem(path: "").serializedName, Self.localSourceControlKind:
+            case PackageKind.localSourceControl(path: "").serializedName:
+                kind = .localSourceControl(path: self.location)
+            case PackageKind.fileSystem(path: "").serializedName:
                 kind = .fileSystem(path: self.location)
             default:
                 throw WorkspaceError(description: "unsupported pin kind '\(self.kind)' for \(self.identity)")
@@ -158,7 +160,6 @@ public struct ResolvedFile: Sendable, Hashable {
             return Pin(package: PackageReference(identity: PackageIdentity(plain: self.identity), kind: kind), state: try self.state.pinState())
         }
 
-        private static let localSourceControlKind = "localSourceControl"
     }
 
     private struct StoredState: Codable {

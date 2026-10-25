@@ -9,6 +9,14 @@ struct RemoteTag: Sendable, Hashable {
     let revision: String
 }
 
+/// A submodule recorded at a revision: where it goes, where it comes from, and its pinned commit.
+struct Submodule: Sendable, Hashable {
+    let path: String
+    /// As written in `.gitmodules`; may be relative to the parent's URL.
+    let url: String
+    let commit: String
+}
+
 /// Thin wrappers over the `git` CLI for one bare, blobless repository in the store.
 ///
 /// Blobless clones (`--filter=blob:none`) download every commit and tree but no file
@@ -25,6 +33,34 @@ struct GitRepository: Sendable {
         static let terminalPromptVariable = "GIT_TERMINAL_PROMPT"
         static let blobType = "blob"
         static let indexFileName = "swx-export.index"
+        static let gitlinkMode = "160000"
+        static let modulesFile = ".gitmodules"
+        static let submoduleKeyPrefix = "submodule."
+        static let pathKey = ".path"
+        static let urlKey = ".url"
+        static let updateKey = ".update"
+        /// `update = none` opts a submodule out of `git submodule update`.
+        static let updateNone = "none"
+        static let pathOrURLPattern = #"^submodule\..*\.(path|url|update)$"#
+    }
+
+    /// Git LFS, which SwiftPM runs on checkouts whose `.gitattributes` use `filter=lfs`.
+    private enum LFS {
+        static let subcommand = "lfs"
+        static let attributesFile = ".gitattributes"
+        static let filterAttribute = "filter=lfs"
+        static let commentPrefix = "#"
+        /// Keeps a globally installed smudge filter from downloading during `read-tree`.
+        static let skipSmudgeVariable = "GIT_LFS_SKIP_SMUDGE"
+        static let enabled = "1"
+        /// Objects live at `lfs/objects/<2 hex>/<2 hex>/<oid>` inside the repository.
+        static let mediaDirectory = "lfs/objects"
+        static let fanoutWidth = 2
+        static let missingHint = """
+            this package stores files with Git LFS, but git-lfs is not installed:
+              macOS:   brew install git-lfs && git lfs install
+              Ubuntu:  apt-get install git-lfs && git lfs install
+            """
     }
 
     /// Never block on credential prompts; fail fast instead.
@@ -120,6 +156,13 @@ struct GitRepository: Sendable {
         }
     }
 
+    /// Fetches one commit that no tag or branch tip carries (e.g. a submodule's pinned commit).
+    func fetchCommit(_ revision: String) async throws {
+        try await Self.withNetworkRetry {
+            try await self.git(["fetch", "--quiet", "--no-tags", Git.blobFilter, "origin", revision])
+        }
+    }
+
     /// The subset of `revisions` whose commits are not in the local repository.
     func missingCommits(_ revisions: [String]) async throws -> [String] {
         try await self.missingObjects(revisions)
@@ -188,10 +231,177 @@ struct GitRepository: Sendable {
         defer { try? FileManager.default.removeItem(at: index) }
 
         // A private index file keeps concurrent exports of the same repository independent.
-        try await ProcessRunner.run(
-            [Git.executable, "--git-dir=\(self.path.path)", "--work-tree=\(destination.path)", "read-tree", "-u", "--reset", revision],
-            environment: Self.nonInteractive.merging([Git.indexFileVariable: index.path]) { $1 }
+        let workTree = [Git.executable, "--git-dir=\(self.path.path)", "--work-tree=\(destination.path)"]
+        let environment = Self.nonInteractive.merging([Git.indexFileVariable: index.path, LFS.skipSmudgeVariable: LFS.enabled]) { $1 }
+        try await ProcessRunner.run(workTree + ["read-tree", "-u", "--reset", revision], environment: environment)
+
+        // LFS files arrive as pointers; fetch their objects into the store repository, then swap them in.
+        guard Self.tracksLFS(destination) else { return }
+        try await Self.requireLFS()
+        try await Self.withNetworkRetry {
+            try await self.git([LFS.subcommand, "fetch", "origin", revision])
+        }
+        try await self.replaceLFSPointers(at: revision, in: destination)
+    }
+
+    /// Copies each LFS object over its pointer. `git lfs checkout` would need a `HEAD`, which a
+    /// shared store repository can't move per export, so list the revision's files explicitly.
+    private func replaceLFSPointers(at revision: String, in tree: URL) async throws {
+        let listing = try await self.git([LFS.subcommand, "ls-files", "--long", revision])
+        let mediaDirectory = self.path.appendingPathComponent(LFS.mediaDirectory, isDirectory: true)
+
+        for file in Self.parseLFSFiles(listing.output) {
+            let object = mediaDirectory
+                .appendingPathComponent(String(file.oid.prefix(LFS.fanoutWidth)))
+                .appendingPathComponent(String(file.oid.dropFirst(LFS.fanoutWidth).prefix(LFS.fanoutWidth)))
+                .appendingPathComponent(file.oid)
+            guard FileSystem.exists(object) else {
+                throw SourceError(description: "LFS object \(file.oid) for \(file.path) was not downloaded")
+            }
+
+            // Keep the pointer's permissions (an executable stays executable).
+            let destination = tree.appendingPathComponent(file.path)
+            let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+            try FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: object, to: destination)
+            if let permissions = attributes[.posixPermissions] {
+                try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: destination.path)
+            }
+        }
+    }
+
+    /// `git lfs ls-files --long` lines: `<oid> <*|-> <path>`.
+    static func parseLFSFiles(_ output: String) -> [(oid: String, path: String)] {
+        output.split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: " ", maxSplits: 2)
+            guard parts.count == 3 else { return nil }
+            return (String(parts[0]), String(parts[2]))
+        }
+    }
+
+    /// SwiftPM's test: any non-comment `.gitattributes` line with `filter=lfs`.
+    static func tracksLFS(_ tree: URL) -> Bool {
+        guard let data = FileSystem.readIfPresent(tree.appendingPathComponent(LFS.attributesFile)) else { return false }
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix(LFS.commentPrefix) else { return false }
+            return trimmed.split(whereSeparator: \.isWhitespace).contains { $0 == LFS.filterAttribute }
+        }
+    }
+
+    private static func requireLFS() async throws {
+        let probe = try await ProcessRunner.run([Git.executable, LFS.subcommand, "version"], exitPolicy: .allowFailure)
+        guard probe.succeeded else {
+            throw SourceError(description: LFS.missingHint)
+        }
+    }
+
+    // MARK: Submodules
+
+    /// The submodules `git submodule update --init` would check out for the tree exported at `tree`.
+    func submodules(at revision: String, exportedTo tree: URL) async throws -> [Submodule] {
+        let modulesFile = tree.appendingPathComponent(Git.modulesFile)
+        guard FileSystem.exists(modulesFile) else { return [] }
+
+        // `.gitmodules`: name → path, url (git's own parser handles its quoting rules).
+        let config = try await ProcessRunner.run(
+            [Git.executable, "config", "--file", modulesFile.path, "--get-regexp", Git.pathOrURLPattern],
+            exitPolicy: .allowFailure
         )
+        let declared = Self.parseModules(config.output)
+        guard !declared.isEmpty else { return [] }
+
+        // Each submodule's commit is the gitlink at its path.
+        let paths = declared.map(\.path)
+        let listing = try await self.git(["ls-tree", "-z", revision, "--"] + paths)
+        let gitlinks = Self.parseGitlinks(listing.output)
+
+        return declared.compactMap { module in
+            guard let commit = gitlinks[module.path] else { return nil }
+            return Submodule(path: module.path, url: module.url, commit: commit)
+        }
+    }
+
+    /// `submodule.<name>.path <value>` lines → declared modules, skipping `update = none`.
+    static func parseModules(_ output: String) -> [(path: String, url: String)] {
+        var paths: [String: String] = [:]
+        var urls: [String: String] = [:]
+        var skipped: Set<String> = []
+        var order: [String] = []
+
+        for line in output.split(separator: "\n") {
+            guard let space = line.firstIndex(of: " ") else { continue }
+            let key = String(line[..<space])
+            let value = String(line[line.index(after: space)...])
+            guard key.hasPrefix(Git.submoduleKeyPrefix) else { continue }
+
+            if key.hasSuffix(Git.pathKey) {
+                let name = String(key.dropFirst(Git.submoduleKeyPrefix.count).dropLast(Git.pathKey.count))
+                if paths[name] == nil, urls[name] == nil { order.append(name) }
+                paths[name] = value
+            } else if key.hasSuffix(Git.urlKey) {
+                let name = String(key.dropFirst(Git.submoduleKeyPrefix.count).dropLast(Git.urlKey.count))
+                if paths[name] == nil, urls[name] == nil { order.append(name) }
+                urls[name] = value
+            } else if key.hasSuffix(Git.updateKey), value == Git.updateNone {
+                skipped.insert(String(key.dropFirst(Git.submoduleKeyPrefix.count).dropLast(Git.updateKey.count)))
+            }
+        }
+
+        return order.compactMap { name in
+            guard !skipped.contains(name), let path = paths[name], let url = urls[name] else { return nil }
+            return (path, url)
+        }
+    }
+
+    /// `ls-tree -z` records → `path → commit` for gitlinks.
+    static func parseGitlinks(_ output: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for record in output.split(separator: "\0") {
+            // `<mode> <type> <object>\t<path>`
+            let parts = record.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let meta = parts[0].split(separator: " ")
+            guard meta.count == 3, meta[0] == Git.gitlinkMode else { continue }
+            result[String(parts[1])] = String(meta[2])
+        }
+        return result
+    }
+
+    private static let relativeCurrent = "./"
+    private static let relativeParent = "../"
+    private static let pathSeparator: Character = "/"
+    private static let scpSeparator: Character = ":"
+
+    /// Resolves a relative submodule URL (`../other.git`) against the parent's URL, as git does.
+    static func resolveSubmoduleURL(_ url: String, relativeTo base: String) -> String {
+        guard url.hasPrefix(Self.relativeCurrent) || url.hasPrefix(Self.relativeParent) else { return url }
+
+        var resolved = base
+        while resolved.hasSuffix(String(Self.pathSeparator)) {
+            resolved.removeLast()
+        }
+        var remainder = Substring(url)
+
+        // Each `../` drops one component of the base; `./` drops none.
+        while true {
+            if remainder.hasPrefix(Self.relativeCurrent) {
+                remainder = remainder.dropFirst(Self.relativeCurrent.count)
+                continue
+            }
+            guard remainder.hasPrefix(Self.relativeParent) else { break }
+            remainder = remainder.dropFirst(Self.relativeParent.count)
+
+            // Stop at the scheme's `//` or an scp-style `host:`.
+            guard let cut = resolved.lastIndex(where: { $0 == Self.pathSeparator || $0 == Self.scpSeparator }) else { break }
+            let separator = resolved[cut]
+            resolved = String(resolved[..<cut])
+            if separator == Self.scpSeparator {
+                resolved.append(Self.scpSeparator)
+                return resolved + remainder
+            }
+        }
+        return resolved + String(Self.pathSeparator) + remainder
     }
 
     // MARK: Helpers

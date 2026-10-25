@@ -18,6 +18,10 @@ jobs:
           cp Tests/Fixtures/sample/Package.swift /tmp/fixture/
           echo 'print("hi")' > /tmp/fixture/Sources/App/main.swift
           Scripts/compare-with-swiftpm.sh /tmp/fixture .build/release/swx
+      - name: Lockfile reuse and submodules against SwiftPM
+        run: |
+          Scripts/compare-pin-reuse.sh .build/release/swx
+          Scripts/compare-submodules.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04
@@ -33,6 +37,8 @@ jobs:
           cp Tests/Fixtures/sample/Package.swift Tests/Fixtures/sample/greet.swift /work/
           echo 'print("hi")' > /work/Sources/App/main.swift
           SWX=.build/release/swx Scripts/linux/workflow.sh
+      - name: Git LFS dependencies against SwiftPM
+        run: SWX="$PWD/.build/release/swx" Scripts/linux/lfs-check.sh
 
   static-linux:
     runs-on: ubuntu-24.04
