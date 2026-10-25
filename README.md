@@ -222,6 +222,7 @@ Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTy
 Scripts/compare-xcode-apps.sh                         # iOS app + widget + watch app project: resolution vs xcodebuild, build, launch
 Scripts/compare-xcode-registry.sh                     # registry packages in an Xcode project vs xcodebuild
 Scripts/check-xcode-generate.sh                       # swx xcode generate: generate, resolve with swx, build offline, check Info.plist
+Scripts/check-apple-platforms.sh                      # device builds and simulator tests on iOS, watchOS, tvOS, visionOS
 swx debug manifest-parity --candidate xcode …         # Xcode ManifestAPI evaluation vs dump-package on the corpus
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package

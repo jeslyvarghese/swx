@@ -32,3 +32,24 @@ struct DestinationTests {
         #expect(!DeviceRunner.compareVersions("27.0", "26.5"))
     }
 }
+
+struct PhysicalDeviceTests {
+    /// devicectl lists simulators too; only physical devices count, by hardware UDID.
+    @Test func keepsPhysicalDevicesByUDID() {
+        let devices: [[String: Any]] = [
+            [
+                "identifier": "D62446A2-B285-441E-865F-74A9D1964BFE",
+                "deviceProperties": ["name": "Apple TV 4K", "osVersionNumber": "27.0"],
+                "hardwareProperties": ["platform": "tvOS", "reality": "simulated", "udid": "D62446A2-B285-441E-865F-74A9D1964BFE"],
+            ],
+            [
+                "identifier": "3AF27EAF-9419-5920-98FF-B8E5225D9031",
+                "deviceProperties": ["name": "My iPhone", "osVersionNumber": "27.2"],
+                "hardwareProperties": ["platform": "iOS", "reality": "physical", "udid": "00008140-0006648E26D2801C"],
+            ],
+        ]
+        let found = DeviceRunner.physicalDevices(in: devices)
+        #expect(found.map(\.identifier) == ["00008140-0006648E26D2801C"])
+        #expect(found.map(\.name) == ["My iPhone"])
+    }
+}

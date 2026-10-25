@@ -67,6 +67,10 @@ public enum DeviceRunner {
         return (platform, parts.dropFirst().joined(separator: "."))
     }
 
+    private static let realityKey = "reality"
+    private static let physicalReality = "physical"
+    private static let udidKey = "udid"
+
     /// Physical devices known to CoreDevice (paired, possibly offline).
     public static func devices() async throws -> [RunTarget] {
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("swx-devices-\(UUID().uuidString).json")
@@ -79,14 +83,25 @@ public enum DeviceRunner {
             return []
         }
 
-        return devices.compactMap { device in
-            guard let identifier = device["identifier"] as? String,
+        return Self.physicalDevices(in: devices)
+    }
+
+    /// `devicectl list devices` entries → physical devices (simulators are listed there too).
+    static func physicalDevices(in devices: [[String: Any]]) -> [RunTarget] {
+        devices.compactMap { device in
+            guard let coreDeviceIdentifier = device["identifier"] as? String,
                   let properties = device["deviceProperties"] as? [String: Any],
                   let hardware = device["hardwareProperties"] as? [String: Any],
                   let platformName = hardware["platform"] as? String,
                   let platform = ApplePlatform(argument: platformName) else {
                 return nil
             }
+
+            // devicectl also lists simulators (`reality: simulated`); those come from simctl.
+            guard hardware[Self.realityKey] as? String == Self.physicalReality else { return nil }
+
+            // xcodebuild destinations need the hardware UDID; devicectl accepts it too.
+            let identifier = hardware[Self.udidKey] as? String ?? coreDeviceIdentifier
             return RunTarget(
                 identifier: identifier,
                 name: properties["name"] as? String ?? identifier,
