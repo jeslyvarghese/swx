@@ -1,0 +1,88 @@
+{
+  "object" : {
+    "artifacts" : [
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "lottie-spm",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/airbnb/lottie-spm",
+          "name" : "Lottie"
+        },
+        "path" : "/private/tmp/Lint/.build/artifacts/lottie-spm/Lottie/Lottie.xcframework",
+        "source" : {
+          "checksum" : "92206ff6af80373903767214ac16215838f6da11dedca789c0439299b46b6694",
+          "type" : "remote",
+          "url" : "https://github.com/airbnb/lottie-ios/releases/download/4.5.2/Lottie.xcframework.zip"
+        },
+        "targetName" : "Lottie"
+      },
+      {
+        "kind" : {
+          "typedArtifactsArchive" : {
+            "_0" : [
+              "executable"
+            ]
+          }
+        },
+        "packageRef" : {
+          "identity" : "swiftlintplugins",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/SimplyDanny/SwiftLintPlugins",
+          "name" : "SwiftLintPlugins"
+        },
+        "path" : "/private/tmp/Lint/.build/artifacts/swiftlintplugins/SwiftLintBinary/SwiftLintBinary.artifactbundle",
+        "source" : {
+          "checksum" : "b9f915a58a818afcc66846740d272d5e73f37baf874e7809ff6f246ea98ad8a2",
+          "type" : "remote",
+          "url" : "https://github.com/realm/SwiftLint/releases/download/0.59.1/SwiftLintBinary.artifactbundle.zip"
+        },
+        "targetName" : "SwiftLintBinary"
+      }
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "lottie-spm",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/airbnb/lottie-spm",
+          "name" : "Lottie"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "04f2fd18cc9404a0a0917265a449002674f24ec9",
+            "version" : "4.5.2"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "lottie-spm"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "swiftlintplugins",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/SimplyDanny/SwiftLintPlugins",
+          "name" : "SwiftLintPlugins"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "8545ddf4de043e6f2051c5cf204f39ef778ebf6b",
+            "version" : "0.59.1"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "SwiftLintPlugins"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

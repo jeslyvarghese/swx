@@ -66,6 +66,11 @@ struct DependencyMirrors: Sendable {
         DependencyDeclaration(package: self.effective(declaration.package), requirement: declaration.requirement)
     }
 
+    /// Where to download from: SwiftPM mirrors binary-target URLs too.
+    func location(_ url: String) -> String {
+        self.mirrors[url] ?? url
+    }
+
     /// The reference to record in `Package.resolved`: the original location.
     func original(_ package: PackageReference) -> PackageReference {
         guard case .remoteSourceControl(let url) = package.kind, let original = self.originals[url] else {

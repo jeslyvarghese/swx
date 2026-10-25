@@ -88,6 +88,8 @@ public struct Workspace: Sendable {
         let resolvedFile: URL
         /// `.build` for packages, `SourcePackages` for Xcode.
         let stateDirectory: URL
+        /// How paths inside the state file are spelled.
+        let pathStyle: RecordedPathStyle
 
         var checkoutsDirectory: URL {
             self.stateDirectory.appendingPathComponent(WellKnownFile.checkoutsDirectory, isDirectory: true)
@@ -95,6 +97,10 @@ public struct Workspace: Sendable {
 
         var workspaceState: URL {
             self.stateDirectory.appendingPathComponent(WellKnownFile.workspaceState)
+        }
+
+        var artifactsDirectory: URL {
+            self.stateDirectory.appendingPathComponent(WellKnownFile.artifactsDirectory, isDirectory: true)
         }
     }
 
@@ -129,11 +135,12 @@ public struct Workspace: Sendable {
     private func rootContext() async throws -> RootContext {
         switch self.options.root {
         case .package(let directory):
-            return try Self.packageContext(directory, stateDirectory: directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true))
+            let buildDirectory = directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
+            return try Self.packageContext(directory, stateDirectory: buildDirectory, pathStyle: .lexical)
 
         case .packageForXcode(let directory, let sourcePackages):
-            // Same pins and origin hash as SwiftPM; only the checkout location differs.
-            return try Self.packageContext(directory, stateDirectory: sourcePackages)
+            // Same pins and origin hash as SwiftPM; only the checkout location (and Xcode's path spelling) differ.
+            return try Self.packageContext(directory, stateDirectory: sourcePackages, pathStyle: .symlinksResolved)
 
         case .xcodeProject(let url, let sourcePackages):
             let project = try await XcodeProjectReader.read(url)
@@ -149,7 +156,7 @@ public struct Workspace: Sendable {
             return RootContext(
                 reference: PackageReference(identity: PackageIdentity(location: url.path), kind: .root(path: url.path)),
                 originHash: originHash,
-                layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages),
+                layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages, pathStyle: .symlinksResolved),
                 source: .xcode(manifest),
                 mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent())
             )
@@ -157,12 +164,12 @@ public struct Workspace: Sendable {
     }
 
     /// SwiftPM: originHash is the SHA-256 of the root manifest's bytes.
-    private static func packageContext(_ directory: URL, stateDirectory: URL) throws -> RootContext {
+    private static func packageContext(_ directory: URL, stateDirectory: URL, pathStyle: RecordedPathStyle) throws -> RootContext {
         let manifestURL = directory.appendingPathComponent(WellKnownFile.manifest)
         guard let data = FileSystem.readIfPresent(manifestURL) else {
             throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(directory.path)")
         }
-        let layout = Layout(resolvedFile: directory.appendingPathComponent(WellKnownFile.packageResolved), stateDirectory: stateDirectory)
+        let layout = Layout(resolvedFile: directory.appendingPathComponent(WellKnownFile.packageResolved), stateDirectory: stateDirectory, pathStyle: pathStyle)
         return RootContext(
             reference: PackageReference(identity: PackageIdentity(location: directory.path), kind: .root(path: directory.path)),
             originHash: ContentHash.sha256(data),
@@ -220,8 +227,23 @@ public struct Workspace: Sendable {
             if Self.checkoutsMatch(pins: pins, state: state, layout: layout) {
                 return ResolveReport(outcome: .upToDate, pins: pins, changes: [], materialized: 0)
             }
-            let source = GitSource(store: self.store, maximumConcurrency: self.options.maximumConcurrency)
-            let materialized = try await self.materialize(pins: pins, fileSystemDependencies: [], previous: state, source: source, layout: layout)
+            let concurrency = self.options.maximumConcurrency
+            let toolchain = try await Toolchain.detect(store: self.store)
+            let loader = ManifestLoader(store: self.store, toolchain: toolchain, maximumConcurrency: concurrency)
+            let materialized = try await self.materialize(
+                pins: pins,
+                fileSystemDependencies: [],
+                root: try await self.rootManifest(root, loader: loader),
+                rootReference: root.reference,
+                previous: state,
+                context: MaterializeContext(
+                    source: GitSource(store: self.store, maximumConcurrency: concurrency),
+                    loader: loader,
+                    toolsVersion: toolchain.toolsVersion,
+                    mirrors: root.mirrors,
+                    layout: layout
+                )
+            )
             return ResolveReport(outcome: .restoredFromPins, pins: pins, changes: [], materialized: materialized)
         }
 
@@ -256,13 +278,7 @@ public struct Workspace: Sendable {
         let facts = FactProvider(source: source, loader: loader, toolchain: toolchain, preferred: preferred, mirrors: rootContext.mirrors)
 
         // Evaluate the root and split its dependencies into versioned ones and overrides.
-        let root: Manifest
-        switch rootContext.source {
-        case .package(let directory):
-            root = try await loader.load(packageAt: directory)
-        case .xcode(let manifest):
-            root = manifest
-        }
+        let root = try await self.rootManifest(rootContext, loader: loader)
         let rootReference = rootContext.reference
         let overrides = try await self.collectOverrides(
             root: root,
@@ -302,9 +318,10 @@ public struct Workspace: Sendable {
         let materialized = try await self.materialize(
             pins: pins,
             fileSystemDependencies: fileSystemDependencies,
+            root: root,
+            rootReference: rootReference,
             previous: previousState,
-            source: source,
-            layout: layout
+            context: MaterializeContext(source: source, loader: loader, toolsVersion: toolchain.toolsVersion, mirrors: rootContext.mirrors, layout: layout)
         )
         // The lockfile records original locations, so it stays valid without the mirrors.
         let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state) }
@@ -317,6 +334,15 @@ public struct Workspace: Sendable {
             changes: Self.changes(from: previousPins, to: resolved.pins),
             materialized: materialized
         )
+    }
+
+    private func rootManifest(_ context: RootContext, loader: ManifestLoader) async throws -> Manifest {
+        switch context.source {
+        case .package(let directory):
+            return try await loader.load(packageAt: directory)
+        case .xcode(let manifest):
+            return manifest
+        }
     }
 
     // MARK: Solver loop
@@ -466,10 +492,10 @@ public struct Workspace: Sendable {
             case (.branch(let branch), _):
                 let revision = try await self.branchRevision(branch, of: declaration.package, mode: mode, previousPins: previousPins, source: source)
                 override = Override(package: declaration.package, state: .branch(branch, revision: revision))
-                manifest = try await self.manifest(of: declaration.package, at: revision, source: source, loader: loader)
+                manifest = try await Self.manifest(of: declaration.package, at: revision, source: source, loader: loader, toolsVersion: facts.toolsVersion)
             case (.revision(let revision), _):
                 override = Override(package: declaration.package, state: .revision(revision))
-                manifest = try await self.manifest(of: declaration.package, at: revision, source: source, loader: loader)
+                manifest = try await Self.manifest(of: declaration.package, at: revision, source: source, loader: loader, toolsVersion: facts.toolsVersion)
             case (_, .fileSystem(let path)):
                 manifest = try await loader.load(packageAt: URL(fileURLWithPath: path))
                 override = Override(package: declaration.package, state: .fileSystem(path: path, manifestName: manifest.name))
@@ -496,9 +522,17 @@ public struct Workspace: Sendable {
         return try await source.resolveBranch(branch, of: package)
     }
 
-    private func manifest(of package: PackageReference, at revision: String, source: GitSource, loader: ManifestLoader) async throws -> Manifest {
+    /// The manifest SwiftPM would use at `revision`, honouring version-specific manifests.
+    private static func manifest(
+        of package: PackageReference,
+        at revision: String,
+        source: GitSource,
+        loader: ManifestLoader,
+        toolsVersion: ToolsVersion
+    ) async throws -> Manifest {
         guard let files = try await source.manifestFiles(of: package, at: [revision])[revision],
-              let contents = files.files[WellKnownFile.manifest] else {
+              let name = ToolsVersion.selectManifest(fileNames: files.rootFileNames, current: toolsVersion, contentsOf: { files.files[$0] }),
+              let contents = files.files[name] else {
             throw WorkspaceError(description: "no Package.swift in \(package.identity) at \(revision)")
         }
         return try await loader.load(contents: contents)
@@ -523,27 +557,98 @@ public struct Workspace: Sendable {
         }
     }
 
-    /// Places every pinned tree into `.build/checkouts` and writes workspace state.
+    /// What materializing needs from the resolve that preceded it.
+    private struct MaterializeContext: Sendable {
+        let source: GitSource
+        let loader: ManifestLoader
+        let toolsVersion: ToolsVersion
+        let mirrors: DependencyMirrors
+        let layout: Layout
+    }
+
+    /// A finished piece of materialization work.
+    private enum MaterializeWork: Sendable {
+        case checkout
+        case package(PackageIdentity, name: String, PackageArtifacts)
+    }
+
+    /// Places every pinned tree into `.build/checkouts`, binary artifacts into `.build/artifacts`,
+    /// and writes workspace state.
     private func materialize(
         pins: [Pin],
         fileSystemDependencies: [ManagedDependency],
+        root: Manifest,
+        rootReference: PackageReference,
         previous: WorkspaceState,
-        source: GitSource,
-        layout: Layout
+        context: MaterializeContext
     ) async throws -> Int {
+        let layout = context.layout
+        let preserved = previous.preservedIdentities
+        let installer = ArtifactInstaller(
+            source: BinaryArtifactSource(store: self.store, maximumConcurrency: self.options.maximumConcurrency),
+            artifactsDirectory: layout.artifactsDirectory,
+            pathStyle: layout.pathStyle,
+            mirrors: context.mirrors,
+            previous: previous
+        )
+
         // Only touch checkouts whose revision changed or whose directory is missing.
         let stale = pins.filter { !Self.checkoutsMatch(pins: [$0], state: previous, layout: layout) }
 
-        try await withThrowingTaskGroup(of: Void.self) { group in
+        // Check out, and meanwhile read each package's manifest (for its name and binary targets)
+        // and fetch its artifacts, so downloads overlap with checkouts.
+        let work = try await withThrowingTaskGroup(of: MaterializeWork.self) { group in
             for pin in stale {
                 group.addTask {
-                    let tree = try await source.sourceTree(of: pin.package, revision: pin.state.revision)
+                    let tree = try await context.source.sourceTree(of: pin.package, revision: pin.state.revision)
                     let destination = layout.checkoutsDirectory.appendingPathComponent(pin.package.name)
                     let strategy = try Materializer.materialize(tree, at: destination)
                     self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
+                    return .checkout
                 }
             }
-            try await group.waitForAll()
+
+            // Edited packages are SwiftPM's.
+            for pin in pins where !preserved.contains(pin.package.identity) {
+                group.addTask {
+                    let manifest = try await Self.manifest(
+                        of: pin.package,
+                        at: pin.state.revision,
+                        source: context.source,
+                        loader: context.loader,
+                        toolsVersion: context.toolsVersion
+                    )
+                    let change: PackageChange = previous.dependencies[pin.package.identity]?.state == .sourceControlCheckout(pin.state) ? .unchanged : .updated
+                    let artifacts = try await installer.install(package: pin.package, manifest: manifest, change: change)
+                    return .package(pin.package.identity, name: manifest.name, artifacts)
+                }
+            }
+
+            for dependency in fileSystemDependencies {
+                group.addTask {
+                    let manifest = try await context.loader.load(packageAt: URL(fileURLWithPath: dependency.package.kind.location))
+                    let artifacts = try await installer.install(package: dependency.package, manifest: manifest, change: .unchanged)
+                    return .package(dependency.package.identity, name: manifest.name, artifacts)
+                }
+            }
+
+            group.addTask {
+                let artifacts = try await installer.install(package: rootReference, manifest: root, change: .unchanged)
+                return .package(rootReference.identity, name: root.name, artifacts)
+            }
+
+            return try await group.reduce(into: [MaterializeWork]()) { $0.append($1) }
+        }
+
+        // Collect manifest names and artifact outcomes.
+        var names: [PackageIdentity: String] = [:]
+        var artifacts: [PackageArtifacts] = []
+        for case .package(let identity, let name, let packageArtifacts) in work {
+            names[identity] = name
+            artifacts.append(packageArtifacts)
+            for case (let key, .leftToSwiftPM(let reason)) in packageArtifacts.outcomes {
+                self.log(.verbose, "artifact \(key.package)/\(key.targetName) left to SwiftPM: \(reason)")
+            }
         }
 
         // Remove checkouts of packages that are no longer dependencies.
@@ -553,19 +658,21 @@ public struct Workspace: Sendable {
             try FileSystem.removeTree(layout.checkoutsDirectory.appendingPathComponent(managed.subpath))
         }
 
-        // Record the new state, keeping SwiftPM's own artifacts and prebuilts.
+        // Record the new state; SwiftPM names each dependency after its manifest.
         var state = previous
         state.dependencies = [:]
         for pin in pins {
             state.dependencies[pin.package.identity] = ManagedDependency(
                 package: pin.package,
                 state: .sourceControlCheckout(pin.state),
-                subpath: pin.package.name
+                subpath: pin.package.name,
+                name: names[pin.package.identity]
             )
         }
         for dependency in fileSystemDependencies {
             state.dependencies[dependency.package.identity] = dependency
         }
+        try installer.record(artifacts, into: &state)
         try FileSystem.writeAtomically(try state.encode(), to: layout.workspaceState)
         return stale.count
     }

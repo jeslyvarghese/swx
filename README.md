@@ -109,6 +109,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
 | Warm script start (`swx run greet.swift`) | 10 ms |
 | Pinned tool start (`swx tool run swiftformat@0.54.0`) | 20 ms |
 | Xcode project resolve (2 packages) | 4.0 s with xcodebuild, 1.4 s with swx. Pins, `originHash` and `SourcePackages` state are identical. |
+| lottie-spm (217 MB XCFramework), fresh clone with lockfile | 3.0 s with SwiftPM (unzips again per project), 0.01 s with swx |
 
 ## How it is fast
 
@@ -127,6 +128,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
   - Ignores code that only touches build settings.
   - Anything it can't prove harmless falls back to real evaluation.
   - On a 90-manifest corpus of popular packages, 74% parse statically with 0 disagreements against `dump-package`.
+- **Shared binary artifacts.** Remote `binaryTarget` archives are downloaded once per checksum, verified, unzipped once into the store, and cloned into `.build/artifacts`. The downloads overlap with checkouts. SwiftPM finds them already recorded and doesn't fetch or unzip again.
 - **Content-addressed caches.**
   - Evaluated manifests are keyed by text plus toolchain.
   - Manifest files are keyed by commit.
@@ -171,7 +173,7 @@ The design is **functional core, imperative shell**.
 These areas are verified byte for byte against SwiftPM or Xcode:
 
 - **`Package.resolved`:** v2/v3 written, v1 read. `originHash` matches SwiftPM's and Xcode's computation.
-- **`workspace-state.json`:** v7, including path dependencies and SwiftPM's own artifacts and prebuilts, which are carried through untouched.
+- **`workspace-state.json`:** v7, including path dependencies, dependency names taken from each manifest, and binary artifacts (XCFrameworks and artifact bundles). Xcode's `SourcePackages` spelling (`/tmp`, not `/private/tmp`) is matched too. Entries `swx` doesn't manage (local artifacts, prebuilts, edited packages) are carried through untouched.
 - **Branch, revision and path dependencies:** branch pins keep their commit unless you run `update`.
 - **Dependency semantics:**
   - SwiftPM's dependency pruning (5.2+ product reachability, traits)
@@ -187,7 +189,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 62 unit tests
+swift test                                            # 74 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
@@ -195,12 +197,13 @@ swx debug manifest-parity --cache-path <cache-dir>    # …then check the static
 
 ## Linux
 
-`Scripts/build-linux-static.sh` builds a fully static musl binary: 60 MB stripped, with no runtime dependencies. It runs in a bare Alpine image.
+`Scripts/build-linux-static.sh` builds a fully static musl binary: 64 MB stripped, with no runtime dependencies. It runs in a bare Alpine image. Downloads go through URLSession (statically linked libcurl), because the official Swift images ship no `curl` executable.
 
 `Scripts/linux/run-in-container.sh` runs the Linux workflow in the official `swift:6.4.1-noble` image with Apple's `container` CLI or Docker. On that image:
 - `Package.resolved` and `workspace-state.json` are identical to Linux SwiftPM's
 - a cold resolve takes 4.5 s vs SwiftPM's 20.5 s, and a no-op takes 8 ms
 - `swx run`, scripts and tools all work
+- binary artifacts match SwiftPM's entries, and a second project reuses the store
 - checkouts use `cp --reflink=auto`
 
 CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on macOS and Linux, and builds the static binary.
@@ -219,5 +222,6 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 
 - **Package registries** (SE-0292), and `.netrc` auth for HTTPS git.
 - **Git submodules inside dependencies.**
+- **`.artifactbundleindex` binary targets** are left to SwiftPM, which picks the archive for the host.
 - **Multi-root workspaces.**
 

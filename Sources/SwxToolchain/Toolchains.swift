@@ -78,9 +78,8 @@ public struct ToolchainManager: Sendable {
 
     /// All releases, oldest first.
     public func availableReleases() async throws -> [ToolchainRelease] {
-        // curl keeps the binary free of FoundationNetworking on Linux.
-        let result = try await ProcessRunner.run(["curl", "--fail", "--location", "--silent", "--show-error", Remote.releases.absoluteString])
-        return try JSONDecoder().decode([ToolchainRelease].self, from: result.standardOutput)
+        let data = try await HTTP.data(from: Remote.releases)
+        return try JSONDecoder().decode([ToolchainRelease].self, from: data)
     }
 
     /// `6.3` → the newest `6.3.x`; `6.3.2` → exactly that; `latest` → the newest release.
@@ -151,7 +150,7 @@ public struct ToolchainManager: Sendable {
         let url = try Self.downloadURL(for: release)
         progress("Downloading \(url.absoluteString)")
         let archive = staging.appendingPathComponent(url.lastPathComponent)
-        try await ProcessRunner.run(["curl", "--fail", "--location", "--silent", "--show-error", "--output", archive.path, url.absoluteString])
+        try await HTTP.download(url, to: archive)
 
         progress("Unpacking \(release.name)")
         let unpacked = try await Self.unpack(archive, in: staging)

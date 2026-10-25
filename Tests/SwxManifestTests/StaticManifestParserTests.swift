@@ -20,6 +20,26 @@ private func requirement(_ declaration: String) -> Manifest.Dependency.Requireme
 }
 
 struct StaticManifestParserTests {
+    // MARK: Binary targets
+
+    @Test func readsBinaryTargetLocations() throws {
+        let manifest = try #require(parse("""
+        let artifact = Target.binaryTarget(name: "Lottie", url: "https://example.com/Lottie.xcframework.zip", checksum: "abc")
+        let package = Package(name: "P", targets: [artifact, .binaryTarget(name: "Local", path: "Local.xcframework")])
+        """))
+        #expect(manifest.targets.map(\.binaryLocation) == [
+            .remote(url: "https://example.com/Lottie.xcframework.zip", checksum: "abc"),
+            .local(path: "Local.xcframework"),
+        ])
+    }
+
+    @Test func declinesComputedBinaryLocations() {
+        #expect(parse("""
+        let version = "1.0"
+        let package = Package(name: "P", targets: [.binaryTarget(name: "B", url: "https://example.com/\\(version).zip", checksum: "abc")])
+        """) == nil)
+    }
+
     // MARK: Requirements
 
     @Test func readsEveryRequirementSpelling() {

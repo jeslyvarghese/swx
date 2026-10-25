@@ -123,16 +123,33 @@ public struct Manifest: Sendable, Codable, Hashable {
             case binary
         }
 
+        /// Where a binary target's artifact comes from.
+        public enum BinaryLocation: Sendable, Codable, Hashable {
+            /// `.binaryTarget(name:url:checksum:)`: downloaded, verified against the checksum.
+            case remote(url: String, checksum: String)
+            /// `.binaryTarget(name:path:)`: relative to the package directory.
+            case local(path: String)
+        }
+
         public var name: String
         public var kind: Kind
         public var dependencies: [TargetDependency]
         public var pluginUsages: [PluginUsage]
+        /// Set for binary targets only.
+        public var binaryLocation: BinaryLocation?
 
-        public init(name: String, kind: Kind = .regular, dependencies: [TargetDependency], pluginUsages: [PluginUsage]) {
+        public init(
+            name: String,
+            kind: Kind = .regular,
+            dependencies: [TargetDependency],
+            pluginUsages: [PluginUsage],
+            binaryLocation: BinaryLocation? = nil
+        ) {
             self.name = name
             self.kind = kind
             self.dependencies = dependencies
             self.pluginUsages = pluginUsages
+            self.binaryLocation = binaryLocation
         }
     }
 

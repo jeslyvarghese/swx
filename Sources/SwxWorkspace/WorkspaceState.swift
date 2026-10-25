@@ -35,6 +35,61 @@ public struct EditedDependency: Sendable, Hashable {
     }
 }
 
+/// A binary target's artifact, recorded so SwiftPM sees it as already fetched.
+public struct ManagedArtifact: Sendable, Hashable {
+    public struct Key: Sendable, Hashable, Comparable {
+        public let package: PackageIdentity
+        public let targetName: String
+
+        public init(package: PackageIdentity, targetName: String) {
+            self.package = package
+            self.targetName = targetName
+        }
+
+        public static func < (lhs: Key, rhs: Key) -> Bool {
+            (lhs.package, lhs.targetName) < (rhs.package, rhs.targetName)
+        }
+    }
+
+    public enum Source: Sendable, Hashable {
+        case remote(url: String, checksum: String)
+        case local(checksum: String?)
+    }
+
+    public enum Kind: Sendable, Hashable {
+        case xcframework
+        case artifactsArchive(types: [String])
+        case unknown
+    }
+
+    public let package: PackageReference
+    /// The package's manifest name, as in dependency entries.
+    public let packageName: String
+    public let targetName: String
+    public let source: Source
+    public let path: String
+    public let kind: Kind
+
+    public init(package: PackageReference, packageName: String, targetName: String, source: Source, path: String, kind: Kind) {
+        self.package = package
+        self.packageName = packageName
+        self.targetName = targetName
+        self.source = source
+        self.path = path
+        self.kind = kind
+    }
+
+    public var key: Key {
+        Key(package: self.package.identity, targetName: self.targetName)
+    }
+}
+
+/// What swx needs to know about an artifact entry, whoever wrote it.
+public struct RecordedArtifact: Sendable, Hashable {
+    public let source: ManagedArtifact.Source?
+    public let path: String
+}
+
 /// `.build/workspace-state.json` (format v7), as SwiftPM writes it.
 ///
 /// Artifacts, prebuilts and any dependency entry swx doesn't model (edited, custom, …) are
@@ -43,7 +98,10 @@ public struct WorkspaceState: Sendable {
     public static let formatVersion = 7
 
     public var dependencies: [PackageIdentity: ManagedDependency]
-    var artifacts: [JSONValue]
+    /// Artifact entries as stored; swx rewrites only the ones it manages.
+    private var artifacts: [ManagedArtifact.Key: JSONValue] = [:]
+    /// Entries without a readable key (kept in place, never touched).
+    private var unkeyedArtifacts: [JSONValue] = []
     var prebuilts: [JSONValue]
 
     /// Raw entries for dependencies swx doesn't manage, keyed by identity.
@@ -51,8 +109,58 @@ public struct WorkspaceState: Sendable {
 
     public init(dependencies: [PackageIdentity: ManagedDependency]) {
         self.dependencies = dependencies
-        self.artifacts = []
         self.prebuilts = []
+    }
+
+    // MARK: Artifacts
+
+    public var artifactKeys: [ManagedArtifact.Key] {
+        self.artifacts.keys.sorted()
+    }
+
+    public func artifact(_ key: ManagedArtifact.Key) -> RecordedArtifact? {
+        guard case .object(let entry)? = self.artifacts[key], case .string(let path)? = entry[Key.path] else {
+            return nil
+        }
+        return RecordedArtifact(source: Self.artifactSource(entry[Key.source]), path: path)
+    }
+
+    public mutating func setArtifact(_ artifact: ManagedArtifact) throws {
+        let data = try JSONEncoder().encode(StoredArtifact(artifact))
+        self.artifacts[artifact.key] = try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    public mutating func removeArtifact(_ key: ManagedArtifact.Key) {
+        self.artifacts[key] = nil
+    }
+
+    private static func artifactSource(_ raw: JSONValue?) -> ManagedArtifact.Source? {
+        guard case .object(let source)? = raw, case .string(let type)? = source[Key.type] else { return nil }
+        let checksum: String?
+        if case .string(let value)? = source[Key.checksum] {
+            checksum = value
+        } else {
+            checksum = nil
+        }
+
+        switch type {
+        case SourceType.remote:
+            guard case .string(let url)? = source[Key.url], let checksum else { return nil }
+            return .remote(url: url, checksum: checksum)
+        case SourceType.local:
+            return .local(checksum: checksum)
+        default:
+            return nil
+        }
+    }
+
+    private static func artifactKey(of raw: JSONValue) -> ManagedArtifact.Key? {
+        guard case .object(let entry) = raw,
+              let identity = Self.identity(of: raw),
+              case .string(let targetName)? = entry[Key.targetName] else {
+            return nil
+        }
+        return ManagedArtifact.Key(package: identity, targetName: targetName)
     }
 
     /// Dependencies under `swift package edit`.
@@ -86,6 +194,16 @@ public struct WorkspaceState: Sendable {
         static let subpath = "subpath"
         static let packageRef = "packageRef"
         static let identity = "identity"
+        static let targetName = "targetName"
+        static let source = "source"
+        static let type = "type"
+        static let url = "url"
+        static let checksum = "checksum"
+    }
+
+    private enum SourceType {
+        static let remote = "remote"
+        static let local = "local"
     }
 
     // MARK: Reading
@@ -107,7 +225,13 @@ public struct WorkspaceState: Sendable {
             preserved[identity] = raw
         }
         var state = WorkspaceState(dependencies: dependencies)
-        state.artifacts = stored.object.artifacts
+        for raw in stored.object.artifacts {
+            guard let key = Self.artifactKey(of: raw) else {
+                state.unkeyedArtifacts.append(raw)
+                continue
+            }
+            state.artifacts[key] = raw
+        }
         state.prebuilts = stored.object.prebuilts
         state.preserved = preserved
         return state
@@ -141,8 +265,11 @@ public struct WorkspaceState: Sendable {
             entries.append((dependency.package.identity, try JSONDecoder().decode(JSONValue.self, from: data)))
         }
         let dependencies = entries.sorted { $0.0 < $1.0 }.map(\.1)
+
+        // SwiftPM sorts artifacts by identity (its order within a package is arbitrary).
+        let artifacts = self.unkeyedArtifacts + self.artifacts.sorted { $0.key < $1.key }.map(\.value)
         let stored = Stored(
-            object: StoredObject(artifacts: self.artifacts, dependencies: dependencies, prebuilts: self.prebuilts),
+            object: StoredObject(artifacts: artifacts, dependencies: dependencies, prebuilts: self.prebuilts),
             version: Self.formatVersion
         )
         return try JSONCoding.encoder.encode(stored)
@@ -179,6 +306,28 @@ public struct WorkspaceState: Sendable {
         let kind: String
         let location: String
         let name: String
+    }
+
+    /// An artifact entry, field for field as SwiftPM's `Workspace+State` encodes it.
+    private struct StoredArtifact: Encodable {
+        let kind: ManagedArtifact.Kind
+        let packageRef: StoredPackageRef
+        let path: String
+        let source: ManagedArtifact.Source
+        let targetName: String
+
+        init(_ artifact: ManagedArtifact) {
+            self.kind = artifact.kind
+            self.packageRef = StoredPackageRef(
+                identity: artifact.package.identity.description,
+                kind: artifact.package.kind.serializedName,
+                location: artifact.package.kind.location,
+                name: artifact.packageName
+            )
+            self.path = artifact.path
+            self.source = artifact.source
+            self.targetName = artifact.targetName
+        }
     }
 
     private struct StoredCheckout: Codable {
@@ -279,6 +428,61 @@ public struct WorkspaceState: Sendable {
             default:
                 return nil
             }
+        }
+    }
+}
+
+// MARK: Artifact encoding (Swift's synthesized enum coding, as SwiftPM uses it)
+
+extension ManagedArtifact.Kind: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case xcframework
+        case typedArtifactsArchive
+        case unknown
+    }
+
+    private enum PayloadKeys: String, CodingKey {
+        case types = "_0"
+    }
+
+    private struct Empty: Encodable {}
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .xcframework:
+            try container.encode(Empty(), forKey: .xcframework)
+        case .artifactsArchive(let types):
+            var payload = container.nestedContainer(keyedBy: PayloadKeys.self, forKey: .typedArtifactsArchive)
+            try payload.encode(types, forKey: .types)
+        case .unknown:
+            try container.encode(Empty(), forKey: .unknown)
+        }
+    }
+}
+
+extension ManagedArtifact.Source: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case url
+        case checksum
+    }
+
+    private enum SourceType {
+        static let remote = "remote"
+        static let local = "local"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .remote(let url, let checksum):
+            try container.encode(SourceType.remote, forKey: .type)
+            try container.encode(url, forKey: .url)
+            try container.encode(checksum, forKey: .checksum)
+        case .local(let checksum):
+            try container.encode(SourceType.local, forKey: .type)
+            try container.encodeIfPresent(checksum, forKey: .checksum)
         }
     }
 }

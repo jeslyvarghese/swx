@@ -37,6 +37,7 @@ public enum StaticManifestParser {
         static let condition = "condition"
         static let plugins = "plugins"
         static let enabledTraits = "enabledTraits"
+        static let checksum = "checksum"
     }
 
     private enum RangeOperator {
@@ -495,7 +496,22 @@ public enum StaticManifestParser {
             let dependencies = arguments[Label.dependencies].map { self.list($0, self.targetDependency) } ?? []
             let plugins = arguments[Label.plugins].map { self.list($0, self.pluginUsage) } ?? []
             guard let dependencies, let plugins else { return nil }
-            return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins)
+
+            // Binary targets must name their artifact literally, or resolution can't fetch it.
+            guard kind == .binary else {
+                return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins)
+            }
+            guard let location = self.binaryLocation(arguments) else { return nil }
+            return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins, binaryLocation: location)
+        }
+
+        private func binaryLocation(_ arguments: Arguments) -> Manifest.Target.BinaryLocation? {
+            if let url = arguments[Label.url].flatMap({ self.string($0) }),
+               let checksum = arguments[Label.checksum].flatMap({ self.string($0) }) {
+                return .remote(url: url, checksum: checksum)
+            }
+            guard let path = arguments[Label.path].flatMap({ self.string($0) }) else { return nil }
+            return .local(path: path)
         }
 
         private func targetDependency(_ expression: ExprSyntax) -> Manifest.TargetDependency? {

@@ -40,6 +40,11 @@ actor FactProvider {
         self.mirrors = mirrors
     }
 
+    /// The tools version manifests are selected and checked against.
+    nonisolated var toolsVersion: ToolsVersion {
+        self.toolchain.toolsVersion
+    }
+
     // MARK: Requests
 
     /// Starts work for a request without waiting for it.

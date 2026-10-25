@@ -91,6 +91,7 @@ public enum WellKnownFile {
     public static let packageResolved = "Package.resolved"
     public static let buildDirectory = ".build"
     public static let checkoutsDirectory = "checkouts"
+    public static let artifactsDirectory = "artifacts"
     public static let workspaceState = "workspace-state.json"
 }
 

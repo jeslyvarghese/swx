@@ -10,6 +10,7 @@ import SwxSystem
 /// src/<revision>/        immutable exported source trees
 /// manifests/<key>.json   evaluated manifest summaries
 /// revisions/<sha>.json   root manifest files at a commit (commits are immutable)
+/// artifacts/<checksum>/  extracted binary-target archives, keyed by their SHA-256
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// cas/                   shared compilation cache, when the toolchain supports it
@@ -21,6 +22,7 @@ public struct Store: Sendable {
         case src
         case manifests
         case revisions
+        case artifacts
         case tools
         case scripts
         case toolchains
@@ -77,6 +79,11 @@ public struct Store: Sendable {
     /// Manifest files at a commit; valid forever because a commit's contents never change.
     public func revisionManifestsPath(revision: String) -> URL {
         self.directory(.revisions).appendingPathComponent(revision).appendingPathExtension(Self.jsonExtension)
+    }
+
+    /// The extracted contents of a binary-target archive; the checksum pins its bytes forever.
+    public func artifactPath(checksum: String) -> URL {
+        self.directory(.artifacts).appendingPathComponent(checksum, isDirectory: true)
     }
 
     /// A tool built from `revision` with one toolchain.
@@ -137,7 +144,25 @@ public enum ContentHash {
     }
 
     public static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { Self.hexDigits[Int($0 >> 4)] + Self.hexDigits[Int($0 & 0x0F)] }.joined()
+        Self.hex(SHA256.hash(data: data))
+    }
+
+    private static let fileChunkSize = 1 << 20
+
+    /// Hashes a file in chunks, so large archives never sit in memory whole.
+    public static func sha256(fileAt url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: Self.fileChunkSize), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return Self.hex(hasher.finalize())
+    }
+
+    private static func hex(_ digest: SHA256.Digest) -> String {
+        digest.map { Self.hexDigits[Int($0 >> 4)] + Self.hexDigits[Int($0 & 0x0F)] }.joined()
     }
 
     private static let hexDigits = (0..<16).map { String($0, radix: 16) }

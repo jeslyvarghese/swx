@@ -32,6 +32,8 @@ enum DumpPackageDecoder {
         static let pluginUsages = "pluginUsages"
         static let plugin = "plugin"
         static let type = "type"
+        static let url = "url"
+        static let checksum = "checksum"
     }
 
     private enum DependencyKind {
@@ -171,7 +173,22 @@ enum DumpPackageDecoder {
             return Manifest.PluginUsage(name: name, package: values.count > 1 ? values[1] as? String : nil)
         }
         let kind = (json[Key.type] as? String).flatMap(Manifest.Target.Kind.init(rawValue:)) ?? .regular
-        return Manifest.Target(name: json[Key.name] as? String ?? "", kind: kind, dependencies: dependencies, pluginUsages: plugins)
+        return Manifest.Target(
+            name: json[Key.name] as? String ?? "",
+            kind: kind,
+            dependencies: dependencies,
+            pluginUsages: plugins,
+            binaryLocation: kind == .binary ? Self.binaryLocation(json) : nil
+        )
+    }
+
+    /// Binary targets carry either `url` + `checksum` or a `path`.
+    private static func binaryLocation(_ json: [String: Any]) -> Manifest.Target.BinaryLocation? {
+        if let url = json[Key.url] as? String, let checksum = json[Key.checksum] as? String {
+            return .remote(url: url, checksum: checksum)
+        }
+        guard let path = json[Key.path] as? String else { return nil }
+        return .local(path: path)
     }
 
     private static func targetDependency(_ json: [String: Any]) -> Manifest.TargetDependency? {
