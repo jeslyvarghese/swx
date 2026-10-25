@@ -376,7 +376,9 @@ public struct Workspace: Sendable {
             configuration: root.registries,
             credentials: RegistryCredentials(sources: self.options.swiftPM.credentials),
             fingerprints: self.fingerprints,
-            maximumConcurrency: self.options.maximumConcurrency
+            signingEntities: SigningEntityStore(securityDirectory: self.options.swiftPM.securityDirectory),
+            maximumConcurrency: self.options.maximumConcurrency,
+            warn: { message in FileHandle.standardError.write(Data("warning: \(message)\n".utf8)) }
         )
     }
 

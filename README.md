@@ -194,6 +194,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
   - archives are verified against the release checksum and SwiftPM's trust-on-first-use fingerprints in `--security-path` (default `~/.swiftpm/security`), which `swx` reads and writes in SwiftPM's format
   - credentials as SwiftPM 6.4 finds them: `SWIFTPM_REGISTRY_TOKEN`/`_LOGIN`/`_PASSWORD`, `SWIFTPM_NETRC_DATA`, then the Keychain on macOS (`.netrc` with `--netrc`) or `.netrc` on Linux (`--netrc-file`), sent as basic or bearer auth per `registries.json`
   - releases are immutable, so metadata and manifests are cached in the store and a lockfile restore downloads only the archives
+  - signatures (SE-0391): CMS signatures of archives and manifests are verified against Apple's roots and `trustedRootCertificatesPath`, with SwiftPM's code-signing policy, `onUnsigned`/`onUntrustedCertificate` actions, optional expiry and OCSP checks, default/registry/scope/package overrides, and signer trust on first use in `<security>/signing-entities` (for Apple-issued signers, as SwiftPM records). Compared with SwiftPM for untrusted, trusted, refused and tampered signatures
   - `--use-registry-identity-for-scm` and `--replace-scm-with-registry`: git dependencies the default registry maps (`/identifiers`) are renamed to, or replaced by, their registry packages, with `originalLocation`/`scmUrl` recorded as SwiftPM does
 - **HTTPS git with `.netrc`** works through git itself, which reads `~/.netrc`.
 - **Git tag fingerprints:** like SwiftPM's `checkIntegrity`, the commit behind each checked-out tag is recorded in `<security>/fingerprints/<identity>-<hash>.json` (the same files SwiftPM writes), and a tag that later moves is refused.
@@ -211,6 +212,7 @@ Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftP
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)
 Scripts/compare-registry.sh                           # registries vs SwiftPM, via Scripts/test-registry.py (open and basic auth)
+Scripts/compare-registry-signing.sh                   # signed releases vs SwiftPM: trusted, untrusted, refused, tampered
 Scripts/compare-fingerprints.sh                       # git tag fingerprints vs SwiftPM, and a moved tag refused by both
 Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTypes app vs xcodebuild (macOS with Xcode)
 Scripts/compare-xcode-apps.sh                         # iOS app + widget + watch app project: resolution vs xcodebuild, build, launch
@@ -244,7 +246,6 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 
 ## Not yet supported
 
-- **Registry package signatures** (SE-0391) are not validated. Checksums and fingerprints are, and unsigned packages are accepted with SwiftPM's default policy (`warn`).
 - **Registry packages in Xcode projects** use the same code path but haven't been compared against Xcode.
 - **Multi-root workspaces.**
 

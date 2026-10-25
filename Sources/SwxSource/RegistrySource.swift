@@ -17,6 +17,12 @@ public actor RegistrySource {
     private var releaseTasks: [String: Task<Release, Error>] = [:]
     private var treeTasks: [String: Task<URL, Error>] = [:]
     private var checkedAvailability: Set<URL> = []
+    private let signingEntities: SigningEntityStore
+    /// Who signed each placed release (`nil`: unsigned or untrusted), for `.registry-metadata`.
+    private var signers: [String: SigningEntity] = [:]
+    private let warn: @Sendable (String) -> Void
+    /// Each warning is reported once, however many manifests and archives repeat it.
+    private var reported: Set<String> = []
     private var identityLookups: [String: Task<PackageIdentity?, Error>] = [:]
 
     private enum MediaType {
@@ -56,8 +62,12 @@ public actor RegistrySource {
         configuration: RegistryConfiguration,
         credentials: RegistryCredentials,
         fingerprints: FingerprintStore,
-        maximumConcurrency: Int
+        signingEntities: SigningEntityStore,
+        maximumConcurrency: Int,
+        warn: @escaping @Sendable (String) -> Void
     ) {
+        self.signingEntities = signingEntities
+        self.warn = warn
         self.store = store
         self.configuration = configuration
         self.credentials = credentials
@@ -140,9 +150,12 @@ public actor RegistrySource {
             return release.alternates.first { $0.fileName == name }.map { Self.toolsVersionComment + $0.toolsVersion }
         } ?? WellKnownFile.manifest
         guard let alternate = release.alternates.first(where: { $0.fileName == chosen }) else {
+            try await self.validateManifestSignature(release.manifest, fileName: WellKnownFile.manifest, identity: identity, version: version, release: release)
             return release.manifest
         }
-        return try await self.alternateManifest(identity, version: version, alternate: alternate, registry: release.registry)
+        let manifest = try await self.alternateManifest(identity, version: version, alternate: alternate, registry: release.registry)
+        try await self.validateManifestSignature(manifest, fileName: alternate.fileName, identity: identity, version: version, release: release)
+        return manifest
     }
 
     private func alternateManifest(_ identity: PackageIdentity, version: Version, alternate: Release.Alternate, registry: Registry) async throws -> String {
@@ -174,17 +187,27 @@ public actor RegistrySource {
         let expected = await self.fingerprints.recorded(identity, version: version.description, content: .sourceArchive) ?? release.checksum
 
         let destination = self.store.registryTreePath(checksum: expected)
-        if FileSystem.isDirectory(destination) {
-            // The store already holds these bytes; still record them for this security directory.
-            try await self.fingerprints.verify(identity, version: version.description, content: .sourceArchive, checksum: expected, origin: release.registry.url.absoluteString)
-            return destination
+        let archive = self.store.registryArchivePath(checksum: expected)
+        if !FileSystem.isDirectory(destination) || !FileSystem.exists(archive) {
+            if let running = self.treeTasks[expected] {
+                _ = try await running.value
+            } else {
+                let task = Task { try await self.limiter.run { try await self.download(identity, version: version, release: release, expected: expected) } }
+                self.treeTasks[expected] = task
+                _ = try await task.value
+            }
         }
-        if let running = self.treeTasks[expected] {
-            return try await running.value
-        }
-        let task = Task { try await self.limiter.run { try await self.download(identity, version: version, release: release, expected: expected) } }
-        self.treeTasks[expected] = task
-        return try await task.value
+
+        // The store vouches for the bytes; record them for this security directory, and check the
+        // signature under this project's policy every time (it decides `.registry-metadata` too).
+        try await self.fingerprints.verify(identity, version: version.description, content: .sourceArchive, checksum: expected, origin: release.registry.url.absoluteString)
+        let signer = try await self.validateArchiveSignature(Array(try FileSystem.read(archive)), identity: identity, version: version, release: release)
+        self.signers[Self.releaseKey(identity, version)] = signer
+        return destination
+    }
+
+    private static func releaseKey(_ identity: PackageIdentity, _ version: Version) -> String {
+        identity.description.lowercased() + "@" + version.description
     }
 
     private func download(_ identity: PackageIdentity, version: Version, release: Release, expected: String) async throws -> URL {
@@ -212,13 +235,112 @@ public actor RegistrySource {
         FileSystem.makeReadOnly(root)
         let destination = self.store.registryTreePath(checksum: expected)
         try FileSystem.moveIntoPlace(root, destination)
+        try FileSystem.moveIntoPlace(archive, self.store.registryArchivePath(checksum: expected))
         return destination
     }
 
-    /// The `.registry-metadata` file SwiftPM writes next to each download.
+    /// The `.registry-metadata` file SwiftPM writes next to each download (after `sourceTree`).
     public func releaseMetadataFile(of identity: PackageIdentity, version: Version) async throws -> Data {
         let release = try await self.release(identity, version)
-        return try JSONCoding.encoder.encode(release.metadataFile)
+        var file = release.metadataFile
+        if let signature = release.signature {
+            file.signature = RegistryMetadataFile.Signature(
+                signedBy: self.signers[Self.releaseKey(identity, version)].map(RegistryMetadataFile.Signer.init),
+                format: signature.format,
+                base64: signature.base64
+            )
+        }
+        return try JSONCoding.encoder.encode(file)
+    }
+
+    // MARK: Signatures (SwiftPM's SignatureValidation)
+
+    /// Returns the signer of a signed, trusted archive; applies the policy to the rest.
+    private func validateArchiveSignature(_ content: [UInt8], identity: PackageIdentity, version: Version, release: Release) async throws -> SigningEntity? {
+        let policy = try self.signingPolicy(identity, registry: release.registry)
+        let signer: SigningEntity?
+        if let signature = release.signature {
+            signer = try await self.check(signature: signature.bytes, format: signature.format, content: content, subject: "\(identity) \(version)", identity: identity, policy: policy)
+        } else {
+            try await self.apply(policy.onUnsigned, message: "\(identity) version \(version) from \(release.registry.url.absoluteString) is not signed")
+            signer = nil
+        }
+        try await self.signingEntities.validate(identity, version: version, signingEntity: signer, registry: release.registry.url.absoluteString)
+        return signer
+    }
+
+    /// A signed release must have signed manifests too.
+    private func validateManifestSignature(_ manifest: String, fileName: String, identity: PackageIdentity, version: Version, release: Release) async throws {
+        let policy = try self.signingPolicy(identity, registry: release.registry)
+        guard release.signature != nil else {
+            // Unsigned releases only prompt here; the archive check already warned.
+            if policy.onUnsigned == .prompt {
+                try await self.apply(.prompt, message: "\(identity) version \(version) from \(release.registry.url.absoluteString) is not signed")
+            }
+            return
+        }
+
+        let parsed: ManifestSignature?
+        do {
+            parsed = try ManifestSignature.parse(manifest)
+        } catch {
+            throw SourceError(description: "\(identity) \(version) \(fileName): manifest signature is malformed")
+        }
+        guard let parsed else {
+            throw SourceError(description: "\(identity) \(version) \(fileName) is not signed, but its source archive is")
+        }
+        let signer = try await self.check(
+            signature: parsed.signature, format: parsed.format, content: parsed.contents,
+            subject: "\(identity) \(version) \(fileName)", identity: identity, policy: policy
+        )
+        try await self.signingEntities.validate(identity, version: version, signingEntity: signer, registry: release.registry.url.absoluteString)
+    }
+
+    /// Verifies one signature: invalid ones always fail; untrusted signers follow the policy.
+    private func check(signature: [UInt8], format: String, content: [UInt8], subject: String, identity: PackageIdentity, policy: SigningPolicy) async throws -> SigningEntity? {
+        guard format == SignatureFormat.cms.rawValue else {
+            throw SourceError(description: "\(subject): unknown signature format '\(format)'")
+        }
+        switch try await SignatureVerifier.status(signature: signature, content: content, policy: policy) {
+        case .valid(let signer):
+            return signer
+        case .invalid(let reason):
+            throw SourceError(description: "\(subject): signature is invalid: \(reason)")
+        case .certificateInvalid(let reason):
+            throw SourceError(description: "\(subject): the signing certificate is invalid: \(reason)")
+        case .certificateNotTrusted(let signer):
+            try await self.apply(policy.onUntrustedCertificate, message: "the signer \(signer) is not trusted")
+            return nil
+        }
+    }
+
+    private static let prompt = " Continue? (yes/no): "
+    private static let yes = ["y", "yes"]
+
+    /// `prompt` asks on a terminal and refuses otherwise; `warn` reports and continues.
+    private func apply(_ action: SigningPolicy.Action, message: String) async throws {
+        switch action {
+        case .silentAllow:
+            return
+        case .warn:
+            if self.reported.insert(message).inserted {
+                self.warn(message)
+            }
+        case .error:
+            throw SourceError(description: message)
+        case .prompt:
+            guard isatty(STDIN_FILENO) != 0 else {
+                throw SourceError(description: message + " (refused: no terminal to ask)")
+            }
+            FileHandle.standardError.write(Data((message + Self.prompt).utf8))
+            let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+            guard Self.yes.contains(answer) else { throw SourceError(description: message) }
+        }
+    }
+
+    private func signingPolicy(_ identity: PackageIdentity, registry: Registry) throws -> SigningPolicy {
+        let (_, scope, name) = try self.locate(identity)
+        return self.configuration.signingPolicy(scope: scope, name: name, registry: registry)
     }
 
     // MARK: Releases
@@ -265,11 +387,13 @@ public actor RegistrySource {
         )
         let alternates = LinkHeader.parse(manifestResponse.header(Header.link)).compactMap(Release.Alternate.init)
 
+        let signing = metadata.resources?.first(where: { $0.name == Self.sourceArchiveResource })?.signing
         let cached = Release.Cached(
             checksum: checksum,
             manifest: String(decoding: manifestResponse.body, as: UTF8.self),
             alternates: alternates,
-            metadata: metadata.metadata
+            metadata: metadata.metadata,
+            signature: signing.map { Release.Signature(base64: $0.signatureBase64Encoded, format: $0.signatureFormat) }
         )
         try FileSystem.writeAtomically(try JSONEncoder().encode(cached), to: cache)
         return Release(cached: cached, registry: registry)
@@ -375,8 +499,14 @@ private struct ReleaseList: Decodable {
 /// `GET /{scope}/{name}/{version}`.
 private struct ReleaseMetadata: Decodable {
     struct Resource: Decodable {
+        struct Signing: Decodable {
+            let signatureBase64Encoded: String
+            let signatureFormat: String
+        }
+
         let name: String
         let checksum: String?
+        let signing: Signing?
     }
 
     let resources: [Resource]?
@@ -429,7 +559,29 @@ private struct RegistryMetadataFile: Encodable, Sendable {
         let urlString: String
     }
 
+    /// SwiftPM's `CodableRegistryReleaseMetadata.SigningEntity` (synthesized enum coding).
+    enum Signer: Encodable, Sendable {
+        case recognized(type: String, commonName: String?, organization: String?, identity: String?)
+        case unrecognized(commonName: String?, organization: String?)
+
+        init(_ entity: SigningEntity) {
+            switch entity {
+            case .recognized(let type, let name, let unit, let organization):
+                self = .recognized(type: type, commonName: name, organization: organization, identity: unit)
+            case .unrecognized(let name, _, let organization):
+                self = .unrecognized(commonName: name, organization: organization)
+            }
+        }
+    }
+
+    struct Signature: Encodable, Sendable {
+        let signedBy: Signer?
+        let format: String
+        let base64: String
+    }
+
     let registry: String
+    var signature: Signature?
     let author: Author?
     let description: String?
     let licenseURL: String?
@@ -460,18 +612,30 @@ private struct Release: Sendable {
         }
     }
 
+    /// The source archive's signature, as published.
+    struct Signature: Codable, Sendable {
+        let base64: String
+        let format: String
+
+        var bytes: [UInt8] {
+            Array(Data(base64Encoded: self.base64) ?? Data())
+        }
+    }
+
     /// What the store keeps per release.
     struct Cached: Codable, Sendable {
         let checksum: String
         let manifest: String
         let alternates: [Alternate]
         let metadata: PackageMetadata?
+        let signature: Signature?
     }
 
     let registry: Registry
     let checksum: String
     let manifest: String
     let alternates: [Alternate]
+    let signature: Signature?
     let metadataFile: RegistryMetadataFile
 
     init(cached: Cached, registry: Registry) {
@@ -479,10 +643,12 @@ private struct Release: Sendable {
         self.checksum = cached.checksum
         self.manifest = cached.manifest
         self.alternates = cached.alternates
+        self.signature = cached.signature
 
         let metadata = cached.metadata
         self.metadataFile = RegistryMetadataFile(
             registry: registry.url.absoluteString,
+            signature: nil,
             author: metadata?.author.map { author in
                 RegistryMetadataFile.Author(
                     name: author.name,

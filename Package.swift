@@ -13,6 +13,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax", "600.0.0"..<"700.0.0"),
+        // Registry signatures (SE-0391): CMS verification, as SwiftPM 6.4 does it.
+        .package(url: "https://github.com/apple/swift-certificates", "1.10.1"..<"2.0.0"),
+        .package(url: "https://github.com/apple/swift-asn1", "1.0.0"..<"2.0.0"),
     ],
     targets: [
         // Executable: thin entry point that hands off to SwxCLI.
@@ -87,7 +90,11 @@ let package = Package(
         // Source providers: the only layer that talks to git or the network.
         .target(
             name: "SwxSource",
-            dependencies: ["SwxCore", "SwxStore", "SwxSystem"]
+            dependencies: [
+                "SwxCore", "SwxStore", "SwxSystem",
+                .product(name: "X509", package: "swift-certificates"),
+                .product(name: "SwiftASN1", package: "swift-asn1"),
+            ]
         ),
 
         // Global content-addressed store and checkout materialization.

@@ -14,6 +14,10 @@ and implements the read side of the registry API:
     GET /identifiers?url=<url>                   identities for a source-control URL
     GET /availability                            200
 
+A prebuilt `<root>/<scope>/<name>/<version>.zip` (e.g. from `swift package-registry publish
+--dry-run`) is served as-is, and a `<version>.sig` next to it is announced as the archive's
+CMS signature; the version directory then holds the archive's (signed) sources.
+
 An optional `<root>/<scope>/<name>/<version>.metadata.json` replaces the default release
 `metadata` object (author, licenseURL, repositoryURLs, …).
 
@@ -83,6 +87,11 @@ class Registry:
         if key in self.archives:
             return self.archives[key]
         package_dir, real_scope, real_name = self.package_dir(scope, name)
+        prebuilt = os.path.join(package_dir, f"{version}.zip")
+        if os.path.exists(prebuilt):
+            with open(prebuilt, "rb") as handle:
+                self.archives[key] = handle.read()
+            return self.archives[key]
         source = os.path.join(package_dir, version)
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -193,10 +202,15 @@ def make_handler(registry):
             if os.path.exists(sidecar):
                 with open(sidecar) as handle:
                     metadata = json.load(handle)
+            resource = {"name": SOURCE_ARCHIVE, "type": ZIP_TYPE, "checksum": checksum}
+            signature = os.path.join(package_dir, f"{version}.sig")
+            if os.path.exists(signature):
+                with open(signature, "rb") as handle:
+                    resource["signing"] = {"signatureBase64Encoded": base64.b64encode(handle.read()).decode(), "signatureFormat": "cms-1.0.0"}
             self.send_json(200, {
                 "id": f"{real_scope}.{real_name}",
                 "version": version,
-                "resources": [{"name": SOURCE_ARCHIVE, "type": ZIP_TYPE, "checksum": checksum}],
+                "resources": [resource],
                 "metadata": metadata,
                 "publishedAt": "2024-01-01T00:00:00Z",
             })

@@ -78,6 +78,25 @@ public enum HTTP {
         }
     }
 
+    /// A POST whose status is returned rather than checked (OCSP queries).
+    public static func post(_ url: URL, body: Data, headers: [String: String]) async throws -> HTTPResponse {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            request.httpMethod = Self.postMethod
+            request.httpBody = body
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (data, response) = try await Self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            return HTTPResponse(status: http.statusCode, body: data, headers: [:])
+        }
+    }
+
+    private static let postMethod = "POST"
+
     // MARK: Helpers
 
     private static let session = URLSession(configuration: .ephemeral)

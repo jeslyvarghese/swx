@@ -148,7 +148,7 @@ struct RegistryPinTests {
         let decoded = try #require(WorkspaceState.decodeIfCompatible(original))
 
         let graph = try #require(decoded.dependencies[PackageIdentity(plain: "mona.Graph")])
-        #expect(graph.state == .registryDownload(Version(1, 0, 0)))
+        #expect(graph.state == .registryDownload(Version(1, 0, 0), scmURL: nil))
         #expect(graph.subpath == "mona/Graph/1.0.0")
         #expect(try decoded.encode() == original)
     }

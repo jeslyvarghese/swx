@@ -96,9 +96,18 @@ public struct Store: Sendable {
         self.directory(.registry).appendingPathComponent(checksum, isDirectory: true)
     }
 
+    /// The source archive itself, kept so its signature can be checked whenever it is placed.
+    public func registryArchivePath(checksum: String) -> URL {
+        self.directory(.registry).appendingPathComponent(checksum).appendingPathExtension(Self.zipExtension)
+    }
+
+    private static let zipExtension = "zip"
+    /// Bumped when the cached release format gains fields (2: signatures).
+    private static let releaseFormat = "2"
+
     /// Cached metadata of one release, keyed by registry, identity and version.
     public func registryReleasePath(registry: String, identity: String, version: String) -> URL {
-        let key = ContentHash.sha256([registry, identity.lowercased(), version].joined(separator: "\u{0}"))
+        let key = ContentHash.sha256([Self.releaseFormat, registry, identity.lowercased(), version].joined(separator: "\u{0}"))
         return self.directory(.releases).appendingPathComponent(key).appendingPathExtension(Self.jsonExtension)
     }
 

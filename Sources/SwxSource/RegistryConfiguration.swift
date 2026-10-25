@@ -32,6 +32,11 @@ public struct RegistryConfiguration: Sendable {
     private var scopedRegistries: [String: Registry] = [:]
     /// Keyed by `host` or `host:port`.
     private var authentication: [String: RegistryAuthentication] = [:]
+    /// `security`: signing settings, by level.
+    private var defaultSigning: SigningPolicy.Stored?
+    private var registrySigning: [String: SigningPolicy.Stored] = [:]
+    private var scopeSigning: [String: SigningPolicy.Stored] = [:]
+    private var packageSigning: [String: SigningPolicy.Stored] = [:]
 
     public static let empty = RegistryConfiguration()
 
@@ -60,6 +65,18 @@ public struct RegistryConfiguration: Sendable {
         return self.authentication[key]
     }
 
+    /// SwiftPM's `signing(for:registry:)`: default, then registry host, scope and package overrides.
+    public func signingPolicy(scope: String, name: String, registry: Registry) -> SigningPolicy {
+        var policy = SigningPolicy.default
+        policy.merge(self.defaultSigning)
+        if let host = registry.url.host {
+            policy.merge(self.registrySigning[host])
+        }
+        policy.merge(self.scopeSigning[scope.lowercased()])
+        policy.merge(self.packageSigning[(scope + "." + name).lowercased()])
+        return policy
+    }
+
     // MARK: Reading
 
     private struct Stored: Decodable {
@@ -72,8 +89,20 @@ public struct RegistryConfiguration: Sendable {
             let type: RegistryAuthentication
         }
 
+        struct Override: Decodable {
+            let signing: SigningPolicy.Stored?
+        }
+
+        struct Security: Decodable {
+            let `default`: Override?
+            let registryOverrides: [String: Override]?
+            let scopeOverrides: [String: Override]?
+            let packageOverrides: [String: Override]?
+        }
+
         let registries: [String: StoredRegistry]?
         let authentication: [String: StoredAuthentication]?
+        let security: Security?
     }
 
     private static func read(_ url: URL) throws -> RegistryConfiguration? {
@@ -97,6 +126,10 @@ public struct RegistryConfiguration: Sendable {
         for (host, entry) in stored.authentication ?? [:] {
             configuration.authentication[host.lowercased()] = entry.type
         }
+        configuration.defaultSigning = stored.security?.default?.signing
+        configuration.registrySigning = (stored.security?.registryOverrides ?? [:]).compactMapValues(\.signing)
+        configuration.scopeSigning = Dictionary((stored.security?.scopeOverrides ?? [:]).compactMapValues(\.signing).map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { $1 })
+        configuration.packageSigning = Dictionary((stored.security?.packageOverrides ?? [:]).compactMapValues(\.signing).map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { $1 })
         return configuration
     }
 
@@ -108,5 +141,12 @@ public struct RegistryConfiguration: Sendable {
         }
         self.scopedRegistries.merge(other.scopedRegistries) { $1 }
         self.authentication.merge(other.authentication) { $1 }
+        // Security replaces as a whole, as SwiftPM's `merge` does.
+        if other.defaultSigning != nil || !other.registrySigning.isEmpty || !other.scopeSigning.isEmpty || !other.packageSigning.isEmpty {
+            self.defaultSigning = other.defaultSigning
+            self.registrySigning = other.registrySigning
+            self.scopeSigning = other.scopeSigning
+            self.packageSigning = other.packageSigning
+        }
     }
 }
