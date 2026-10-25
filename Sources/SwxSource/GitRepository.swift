@@ -21,10 +21,8 @@ struct GitRepository: Sendable {
         static let headsPrefix = "refs/heads/"
         static let peeledSuffix = "^{}"
         static let blobFilter = "--filter=blob:none"
-        static let noLazyFetchVariable = "GIT_NO_LAZY_FETCH"
         static let indexFileVariable = "GIT_INDEX_FILE"
         static let terminalPromptVariable = "GIT_TERMINAL_PROMPT"
-        static let missingMarker = "missing"
         static let blobType = "blob"
         static let indexFileName = "swx-export.index"
     }
@@ -124,19 +122,25 @@ struct GitRepository: Sendable {
 
     /// The subset of `revisions` whose commits are not in the local repository.
     func missingCommits(_ revisions: [String]) async throws -> [String] {
-        let unique = Array(Set(revisions))
-        guard !unique.isEmpty else { return [] }
+        try await self.missingObjects(revisions)
+    }
 
-        // One batch query; output lines come back in input order.
-        let result = try await self.git(
-            ["cat-file", "--batch-check"],
-            input: unique.map { "\($0)^{commit}" },
-            environment: [Git.noLazyFetchVariable: "1"]
-        )
-        let lines = result.output.split(separator: "\n", omittingEmptySubsequences: false)
-        return zip(unique, lines).compactMap { revision, line in
-            line.hasSuffix(Git.missingMarker) ? revision : nil
+    /// The subset of `ids` not present locally.
+    ///
+    /// Lists what *is* present rather than probing what isn't: probing a missing object in a
+    /// partial clone is fatal on older git (2.43) when lazy fetching is disabled, and would
+    /// trigger one network round trip per object when it isn't.
+    func missingObjects(_ ids: [String]) async throws -> [String] {
+        let wanted = Set(ids)
+        guard !wanted.isEmpty else { return [] }
+
+        let result = try await self.git(["cat-file", "--batch-all-objects", "--batch-check=%(objectname)", "--unordered"])
+        var missing = wanted
+        for line in result.output.split(separator: "\n") where missing.contains(String(line)) {
+            missing.remove(String(line))
+            if missing.isEmpty { break }
         }
+        return Array(missing)
     }
 
     /// `name → blob id` for the files at the root of `revision`.
@@ -160,16 +164,8 @@ struct GitRepository: Sendable {
         let unique = Array(Set(ids))
         guard !unique.isEmpty else { return [:] }
 
-        // Find which blobs are not local yet (without triggering one-by-one lazy fetches).
-        let check = try await self.git(
-            ["cat-file", "--batch-check"],
-            input: unique,
-            environment: [Git.noLazyFetchVariable: "1"]
-        )
-        let missing = check.output.split(separator: "\n").compactMap { line -> String? in
-            let fields = line.split(separator: " ")
-            return fields.count == 2 && fields[1] == Git.missingMarker ? String(fields[0]) : nil
-        }
+        // Find which blobs are not local yet.
+        let missing = try await self.missingObjects(unique)
 
         // One round trip for everything missing.
         if !missing.isEmpty {

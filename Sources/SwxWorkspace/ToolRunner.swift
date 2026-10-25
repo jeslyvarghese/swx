@@ -170,7 +170,7 @@ public struct ToolRunner: Sendable {
     }
 
     static func pickExecutable(in manifest: Manifest, requested: String?, hint: String) throws -> String {
-        let executables = manifest.products.filter { $0.kind == .executable }.map(\.name)
+        let executables = manifest.executableProductNames
         if let requested {
             guard executables.contains(requested) else {
                 throw WorkspaceError(description: "\(manifest.name) has no executable '\(requested)' (available: \(executables.joined(separator: ", ")))")

@@ -170,7 +170,8 @@ enum DumpPackageDecoder {
             guard let values = usage[Key.plugin] as? [Any], let name = values.first as? String else { return nil }
             return Manifest.PluginUsage(name: name, package: values.count > 1 ? values[1] as? String : nil)
         }
-        return Manifest.Target(name: json[Key.name] as? String ?? "", dependencies: dependencies, pluginUsages: plugins)
+        let kind = (json[Key.type] as? String).flatMap(Manifest.Target.Kind.init(rawValue:)) ?? .regular
+        return Manifest.Target(name: json[Key.name] as? String ?? "", kind: kind, dependencies: dependencies, pluginUsages: plugins)
     }
 
     private static func targetDependency(_ json: [String: Any]) -> Manifest.TargetDependency? {

@@ -112,15 +112,38 @@ public struct Manifest: Sendable, Codable, Hashable {
     }
 
     public struct Target: Sendable, Codable, Hashable {
+        /// SwiftPM's target types (`dump-package`'s `"type"`).
+        public enum Kind: String, Sendable, Codable, Hashable {
+            case regular
+            case executable
+            case test
+            case plugin
+            case macro
+            case system
+            case binary
+        }
+
         public var name: String
+        public var kind: Kind
         public var dependencies: [TargetDependency]
         public var pluginUsages: [PluginUsage]
 
-        public init(name: String, dependencies: [TargetDependency], pluginUsages: [PluginUsage]) {
+        public init(name: String, kind: Kind = .regular, dependencies: [TargetDependency], pluginUsages: [PluginUsage]) {
             self.name = name
+            self.kind = kind
             self.dependencies = dependencies
             self.pluginUsages = pluginUsages
         }
+    }
+
+    /// Executables SwiftPM can build with `--product`: declared ones plus the implicit
+    /// products of executable targets.
+    public var executableProductNames: [String] {
+        var names = self.products.filter { $0.kind == .executable }.map(\.name)
+        for target in self.targets where target.kind == .executable && !names.contains(target.name) {
+            names.append(target.name)
+        }
+        return names
     }
 
     public struct Product: Sendable, Codable, Hashable {

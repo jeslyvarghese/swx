@@ -193,6 +193,18 @@ Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```
 
+## Linux
+
+`Scripts/build-linux-static.sh` builds a fully static musl binary: 60 MB stripped, with no runtime dependencies. It runs in a bare Alpine image.
+
+`Scripts/linux/run-in-container.sh` runs the Linux workflow in the official `swift:6.4.1-noble` image with Apple's `container` CLI or Docker. On that image:
+- `Package.resolved` and `workspace-state.json` are identical to Linux SwiftPM's
+- a cold resolve takes 4.5 s vs SwiftPM's 20.5 s, and a no-op takes 8 ms
+- `swx run`, scripts and tools all work
+- checkouts use `cp --reflink=auto`
+
+CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on macOS and Linux, and builds the static binary.
+
 ## Deviations from the original plan
 
 - **Apple platforms and swift-build.** The plan was to link swift-build in-process and write a PIF builder. Instead, `swx` drives swift-build through `xcodebuild`, which embeds the same engine:
@@ -207,6 +219,5 @@ swx debug manifest-parity --cache-path <cache-dir>    # …then check the static
 
 - **Package registries** (SE-0292), and `.netrc` auth for HTTPS git.
 - **Git submodules inside dependencies.**
-- **`swift package edit`.** It is forwarded to SwiftPM, but checkouts are plain trees, so SwiftPM re-clones.
 - **Multi-root workspaces.**
-- **On Linux:** runtime is untested. `Scripts/build-linux-static.sh` cross-compiles a fully static musl binary, which shows all Linux code paths compile, but it has not been run on a Linux host.
+

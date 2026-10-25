@@ -19,7 +19,7 @@ public enum MaterializeStrategy: Sendable, CustomStringConvertible {
         case .clone:
             return "clone"
         case .reflink:
-            return "reflink"
+            return "cp --reflink=auto"
         case .copy:
             return "copy"
         }

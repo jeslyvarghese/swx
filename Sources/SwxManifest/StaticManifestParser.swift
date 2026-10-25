@@ -473,7 +473,10 @@ public enum StaticManifestParser {
         private static let productKinds: [String: Manifest.Product.Kind] = [
             "library": .library, "executable": .executable, "plugin": .plugin, "iOSApplication": .application,
         ]
-        private static let targetKinds: Set<String> = ["target", "executableTarget", "testTarget", "plugin", "macro", "systemLibrary", "binaryTarget"]
+        private static let targetKinds: [String: Manifest.Target.Kind] = [
+            "target": .regular, "executableTarget": .executable, "testTarget": .test, "plugin": .plugin,
+            "macro": .macro, "systemLibrary": .system, "binaryTarget": .binary,
+        ]
 
         private func product(_ expression: ExprSyntax) -> Manifest.Product? {
             guard let (member, arguments) = self.call(expression), let kind = Self.productKinds[member],
@@ -485,14 +488,14 @@ public enum StaticManifestParser {
         }
 
         private func target(_ expression: ExprSyntax) -> Manifest.Target? {
-            guard let (member, arguments) = self.call(expression), Self.targetKinds.contains(member),
+            guard let (member, arguments) = self.call(expression), let kind = Self.targetKinds[member],
                   let name = arguments[Label.name].flatMap({ self.string($0) }) else {
                 return nil
             }
             let dependencies = arguments[Label.dependencies].map { self.list($0, self.targetDependency) } ?? []
             let plugins = arguments[Label.plugins].map { self.list($0, self.pluginUsage) } ?? []
             guard let dependencies, let plugins else { return nil }
-            return Manifest.Target(name: name, dependencies: dependencies, pluginUsages: plugins)
+            return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins)
         }
 
         private func targetDependency(_ expression: ExprSyntax) -> Manifest.TargetDependency? {
