@@ -47,3 +47,35 @@ struct ToolchainRequestTests {
         #endif
     }
 }
+
+struct SnapshotRequestTests {
+    @Test func parsesSnapshotSpellings() throws {
+        let main = try #require(SnapshotRequest("main-snapshot"))
+        #expect(main.branch == "main" && main.date == nil && main.tag == nil)
+
+        let dated = try #require(SnapshotRequest("6.5-snapshot-2026-10-17"))
+        #expect(dated.branch == "6.5" && dated.date == "2026-10-17")
+
+        let tag = try #require(SnapshotRequest("swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a"))
+        #expect(tag.branch == "main" && tag.date == "2026-10-17")
+
+        let branchTag = try #require(SnapshotRequest("swift-6.5-DEVELOPMENT-SNAPSHOT-2026-09-01-a"))
+        #expect(branchTag.branch == "6.5")
+
+        #expect(SnapshotRequest("6.4.1") == nil)
+        #expect(SnapshotRequest("latest") == nil)
+    }
+
+    /// Installed snapshots are named by tag; requests match by branch and date.
+    @Test func matchesInstalledSnapshots() throws {
+        let main = try #require(SnapshotRequest("main-snapshot"))
+        #expect(main.matches(installedName: "swift-DEVELOPMENT-SNAPSHOT-2026-10-17-a"))
+        #expect(!main.matches(installedName: "swift-6.5-DEVELOPMENT-SNAPSHOT-2026-10-17-a"))
+        #expect(!main.matches(installedName: "6.4.1"))
+
+        let dated = try #require(SnapshotRequest("6.5-snapshot-2026-09-01"))
+        #expect(dated.matches(installedName: "swift-6.5-DEVELOPMENT-SNAPSHOT-2026-09-01-a"))
+        #expect(!dated.matches(installedName: "swift-6.5-DEVELOPMENT-SNAPSHOT-2026-09-02-a"))
+        #expect(!ToolchainManager.satisfies("6.4.1", request: "main-snapshot"))
+    }
+}

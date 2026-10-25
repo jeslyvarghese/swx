@@ -200,8 +200,9 @@ public struct Workspace: Sendable {
 
     private enum RootSource: Sendable {
         case package(URL)
-        /// Xcode declares dependencies directly; there is no manifest to evaluate.
-        case xcode(Manifest)
+        /// Xcode declares dependencies directly, plus package folders placed in the project,
+        /// which are roots of the graph whose dependencies join the project's.
+        case xcode(Manifest, rootPackages: [URL])
     }
 
     /// Xcode always writes `Package.resolved` v3.
@@ -219,11 +220,25 @@ public struct Workspace: Sendable {
 
         case .xcodeProject(let url, let sourcePackages):
             let project = try await XcodeProjectReader.read(url)
-            let originHash = ContentHash.sha256(project.originHashContent)
+
+            // Root packages count with their manifests: in the origin hash, and (by their lowest tools
+            // version) in the lockfile format; Xcode alone writes v3.
+            let rootManifests = try project.rootPackages.map {
+                String(decoding: try FileSystem.read($0.appendingPathComponent(WellKnownFile.manifest)), as: UTF8.self)
+            }
+            let originHash = ContentHash.sha256(project.originHashContent(rootManifests: rootManifests))
+            let toolsVersion = rootManifests.map { ToolsVersion.parse(manifest: $0) }.min()?.description ?? Self.xcodeToolsVersion
+
+            // A local reference to a root package is the root itself, not a dependency.
+            let rootIdentities = Set(project.rootPackages.map { PackageIdentity(location: $0.path) })
+            let references = project.packageReferences.filter { reference in
+                guard case .local(let path) = reference.location else { return true }
+                return !rootIdentities.contains(PackageIdentity(location: path))
+            }
             let manifest = Manifest(
                 name: project.name,
-                toolsVersion: Self.xcodeToolsVersion,
-                dependencies: project.packageReferences.map(Self.dependency),
+                toolsVersion: toolsVersion,
+                dependencies: references.map(Self.dependency),
                 targets: [],
                 products: [],
                 traits: []
@@ -232,7 +247,7 @@ public struct Workspace: Sendable {
                 reference: PackageReference(identity: PackageIdentity(location: url.path), kind: .root(path: url.path)),
                 originHash: originHash,
                 layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages, pathStyle: .symlinksResolved),
-                source: .xcode(manifest),
+                source: .xcode(manifest, rootPackages: project.rootPackages),
                 mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent(), sharedDirectory: self.options.swiftPM.configurationDirectory),
                 registries: try RegistryConfiguration.load(
                     packageDirectory: url.deletingLastPathComponent(),
@@ -489,7 +504,11 @@ public struct Workspace: Sendable {
         switch context.source {
         case .package(let directory):
             return try await loader.load(packageAt: directory)
-        case .xcode(let manifest):
+        case .xcode(var manifest, let rootPackages):
+            // Root packages' dependencies are the project's too.
+            for package in rootPackages {
+                manifest.dependencies += try await loader.load(packageAt: package).dependencies
+            }
             return manifest
         }
     }

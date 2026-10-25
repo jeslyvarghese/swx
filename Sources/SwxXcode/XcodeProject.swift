@@ -28,13 +28,16 @@ public struct XcodePackageReference: Sendable, Hashable {
 public struct XcodeProject: Sendable {
     public let name: String
     public let packageReferences: [XcodePackageReference]
+    /// Package folders placed in the project (or workspace) itself: Xcode makes them roots of
+    /// the package graph, like SwiftPM's root package, rather than dependencies.
+    public let rootPackages: [URL]
     /// Where Xcode keeps the shared `Package.resolved`.
     public let resolvedFile: URL
 
-    /// What Xcode hashes into `originHash`: reference locations ordered by package identity
-    /// (verified against xcodebuild with interleaved local and remote references).
-    public var originHashContent: String {
-        Self.originHashContent(self.packageReferences)
+    /// What Xcode hashes into `originHash`: each root package's manifest, then reference
+    /// locations ordered by package identity (verified against xcodebuild).
+    public func originHashContent(rootManifests: [String]) -> String {
+        rootManifests.joined() + Self.originHashContent(self.packageReferences)
     }
 
     public static func originHashContent(_ references: [XcodePackageReference]) -> String {
@@ -94,31 +97,42 @@ public enum XcodeProjectReader {
     }
 
     /// `group:App.xcodeproj` / `container:App.xcodeproj` locations in workspace XML.
-    private static let fileReferencePattern = #"location\s*=\s*"(?:group|container|absolute):([^"]+\.xcodeproj)""#
+    private static let fileReferencePattern = #"location\s*=\s*"(?:group|container|absolute):([^"]+)""#
 
     /// Reads a project or workspace at `url`.
     public static func read(_ url: URL) async throws -> XcodeProject {
         switch url.pathExtension {
         case Extension.project:
-            let references = try await Self.packageReferences(inProject: url)
+            let contents = try await Self.contents(ofProject: url)
             let resolved = url.appendingPathComponent(Path.embeddedWorkspace)
                 .appendingPathComponent(Path.sharedData)
                 .appendingPathComponent(Path.swiftPM)
                 .appendingPathComponent(WellKnownFile.packageResolved)
-            return XcodeProject(name: url.deletingPathExtension().lastPathComponent, packageReferences: references, resolvedFile: resolved)
+            return XcodeProject(
+                name: url.deletingPathExtension().lastPathComponent,
+                packageReferences: contents.references,
+                rootPackages: contents.rootPackages,
+                resolvedFile: resolved
+            )
 
         case Extension.workspace:
             // A workspace resolves the union of its projects' packages, pinned in its own shared data.
+            let members = try Self.members(ofWorkspace: url)
             var references: [XcodePackageReference] = []
-            for project in try Self.projects(inWorkspace: url) {
-                for reference in try await Self.packageReferences(inProject: project) where !references.contains(reference) {
+            var rootPackages = members.packages
+            for project in members.projects {
+                let contents = try await Self.contents(ofProject: project)
+                for reference in contents.references where !references.contains(reference) {
                     references.append(reference)
+                }
+                for package in contents.rootPackages where !rootPackages.contains(package) {
+                    rootPackages.append(package)
                 }
             }
             let resolved = url.appendingPathComponent(Path.sharedData)
                 .appendingPathComponent(Path.swiftPM)
                 .appendingPathComponent(WellKnownFile.packageResolved)
-            return XcodeProject(name: url.deletingPathExtension().lastPathComponent, packageReferences: references, resolvedFile: resolved)
+            return XcodeProject(name: url.deletingPathExtension().lastPathComponent, packageReferences: references, rootPackages: rootPackages, resolvedFile: resolved)
 
         default:
             throw XcodeProjectError(description: "\(url.path) is not an .xcodeproj or .xcworkspace")
@@ -139,7 +153,17 @@ public enum XcodeProjectReader {
 
     // MARK: Projects
 
+    /// Package references and root package folders of one project.
+    struct ProjectContents {
+        let references: [XcodePackageReference]
+        let rootPackages: [URL]
+    }
+
     static func packageReferences(inProject project: URL) async throws -> [XcodePackageReference] {
+        try await Self.contents(ofProject: project).references
+    }
+
+    static func contents(ofProject project: URL) async throws -> ProjectContents {
         // `plutil` reads the OpenStep plist format of project.pbxproj.
         let projectFile = project.appendingPathComponent(Path.projectFile)
         let result = try await ProcessRunner.run(["plutil", "-convert", "json", "-o", "-", projectFile.path])
@@ -169,7 +193,63 @@ public enum XcodeProjectReader {
                 continue
             }
         }
-        return references
+        let projectDirectory = project.deletingLastPathComponent()
+        return ProjectContents(references: references, rootPackages: Self.rootPackages(objects: objects, rootObject: rootObject, projectDirectory: projectDirectory))
+    }
+
+    // MARK: Root packages
+
+    private enum GroupKey {
+        static let mainGroup = "mainGroup"
+        static let children = "children"
+        static let path = "path"
+        static let sourceTree = "sourceTree"
+        static let fileType = "lastKnownFileType"
+    }
+
+    private enum SourceTree {
+        static let group = "<group>"
+        static let absolute = "<absolute>"
+        static let projectRoot = "SOURCE_ROOT"
+    }
+
+    /// File types Xcode gives a package folder dragged into the project.
+    private static let folderTypes: Set<String> = ["folder", "wrapper"]
+
+    /// Folder references that contain a `Package.swift`, in the project navigator's order.
+    static func rootPackages(objects: [String: [String: Any]], rootObject: [String: Any]?, projectDirectory: URL) -> [URL] {
+        guard let mainGroup = rootObject?[GroupKey.mainGroup] as? String else { return [] }
+        var packages: [URL] = []
+
+        // Walk the navigator tree depth-first, resolving each item's path against its group.
+        func visit(_ identifier: String, parent: URL) {
+            guard let object = objects[identifier], let location = Self.location(of: object, parent: parent, projectDirectory: projectDirectory) else { return }
+            if let type = object[GroupKey.fileType] as? String, Self.folderTypes.contains(type),
+               FileSystem.exists(location.appendingPathComponent(WellKnownFile.manifest)) {
+                packages.append(location.standardizedFileURL)
+                return
+            }
+            for child in object[GroupKey.children] as? [String] ?? [] {
+                visit(child, parent: location)
+            }
+        }
+        visit(mainGroup, parent: projectDirectory)
+        return packages
+    }
+
+    /// An item's location: relative to its group, the project, or absolute; nil for build-time trees.
+    private static func location(of object: [String: Any], parent: URL, projectDirectory: URL) -> URL? {
+        let path = object[GroupKey.path] as? String
+        switch object[GroupKey.sourceTree] as? String ?? SourceTree.group {
+        case SourceTree.group:
+            return path.map { parent.appendingPathComponent($0) } ?? parent
+        case SourceTree.projectRoot:
+            return path.map { projectDirectory.appendingPathComponent($0) } ?? projectDirectory
+        case SourceTree.absolute:
+            return path.map { URL(fileURLWithPath: $0) }
+        default:
+            return nil
+        }
     }
 
     /// Maps Xcode's requirement kinds onto SwiftPM requirements.
@@ -207,18 +287,30 @@ public enum XcodeProjectReader {
     // MARK: Workspaces
 
     static func projects(inWorkspace workspace: URL) throws -> [URL] {
+        try Self.members(ofWorkspace: workspace).projects
+    }
+
+    /// A workspace's projects, and the package folders it lists directly (roots, as in projects).
+    static func members(ofWorkspace workspace: URL) throws -> (projects: [URL], packages: [URL]) {
         let contents = try String(contentsOf: workspace.appendingPathComponent(Path.workspaceContents), encoding: .utf8)
         let regex = try NSRegularExpression(pattern: Self.fileReferencePattern)
         let range = NSRange(contents.startIndex..., in: contents)
 
         // Relative locations are relative to the workspace's directory.
-        return regex.matches(in: contents, range: range).compactMap { match in
-            guard let pathRange = Range(match.range(at: 1), in: contents) else { return nil }
+        var projects: [URL] = []
+        var packages: [URL] = []
+        for match in regex.matches(in: contents, range: range) {
+            guard let pathRange = Range(match.range(at: 1), in: contents) else { continue }
             let path = String(contents[pathRange])
-            if path.hasPrefix("/") {
-                return URL(fileURLWithPath: path)
+            let url = path.hasPrefix("/")
+                ? URL(fileURLWithPath: path)
+                : workspace.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
+            if url.pathExtension == Extension.project {
+                projects.append(url)
+            } else if FileSystem.exists(url.appendingPathComponent(WellKnownFile.manifest)) {
+                packages.append(url)
             }
-            return workspace.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
         }
+        return (projects, packages)
     }
 }

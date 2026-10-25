@@ -120,6 +120,11 @@ public struct ToolchainManager: Sendable {
 
     public func installed(_ request: String) -> InstalledToolchain? {
         let installed = self.installed()
+
+        // Snapshot directories are named by tag; the newest matching one wins (dates sort).
+        if let snapshot = SnapshotRequest(request) {
+            return installed.last { snapshot.matches(installedName: $0.name) }
+        }
         let releases = installed.map { ToolchainRelease(name: $0.name, tag: "") }
         guard let match = Self.match(request, in: releases) else { return nil }
         return installed.first { $0.name == match.name }
@@ -134,28 +139,47 @@ public struct ToolchainManager: Sendable {
 
     // MARK: Install
 
-    /// Downloads and unpacks a release (no root privileges needed).
+    /// Downloads and unpacks a release or development snapshot (no root privileges needed).
     public func install(_ request: String, progress: @Sendable (String) -> Void) async throws -> InstalledToolchain {
+        if let snapshot = SnapshotRequest(request) {
+            return try await self.installSnapshot(snapshot, progress: progress)
+        }
         if let existing = self.installed(request) {
             return existing
         }
         guard let release = Self.match(request, in: try await self.availableReleases()) else {
             throw ToolchainError(description: "no Swift release matches '\(request)'")
         }
+        return try await self.download(try Self.downloadURL(for: release), name: release.name, progress: progress)
+    }
 
-        let staging = try FileSystem.makeTemporaryDirectory(prefix: "swx-toolchain")
+    /// An exact snapshot already installed needs no network; `main-snapshot` checks for a newer one.
+    private func installSnapshot(_ request: SnapshotRequest, progress: @Sendable (String) -> Void) async throws -> InstalledToolchain {
+        if request.tag != nil, let existing = self.installed().first(where: { request.matches(installedName: $0.name) }) {
+            return existing
+        }
+        let snapshot = try await SnapshotCatalog.find(request)
+        if let existing = self.installed().first(where: { $0.name == snapshot.tag }) {
+            return existing
+        }
+        return try await self.download(snapshot.download, name: snapshot.tag, progress: progress)
+    }
+
+    private static let stagingPrefix = "swx-toolchain"
+
+    private func download(_ url: URL, name: String, progress: @Sendable (String) -> Void) async throws -> InstalledToolchain {
+        let staging = try FileSystem.makeTemporaryDirectory(prefix: Self.stagingPrefix)
         defer { try? FileSystem.removeTree(staging) }
-        let destination = self.root.appendingPathComponent(release.name, isDirectory: true)
+        let destination = self.root.appendingPathComponent(name, isDirectory: true)
 
-        let url = try Self.downloadURL(for: release)
         progress("Downloading \(url.absoluteString)")
         let archive = staging.appendingPathComponent(url.lastPathComponent)
         try await HTTP.download(url, to: archive)
 
-        progress("Unpacking \(release.name)")
+        progress("Unpacking \(name)")
         let unpacked = try await Self.unpack(archive, in: staging)
         try FileSystem.moveIntoPlace(unpacked, destination)
-        return InstalledToolchain(name: release.name, root: destination)
+        return InstalledToolchain(name: name, root: destination)
     }
 
     /// The download for this machine.
@@ -238,7 +262,9 @@ public struct ToolchainManager: Sendable {
 
     /// Does `request` name the release `version` belongs to?
     public static func satisfies(_ version: String, request: String) -> Bool {
-        Self.match(request, in: [ToolchainRelease(name: version, tag: "")]) != nil
+        // A release on PATH never stands in for a snapshot.
+        guard SnapshotRequest(request) == nil else { return false }
+        return Self.match(request, in: [ToolchainRelease(name: version, tag: "")]) != nil
     }
 
     /// Puts the toolchain first on `PATH` for this process and everything it spawns.
