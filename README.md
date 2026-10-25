@@ -199,6 +199,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 - **HTTPS git with `.netrc`** works through git itself, which reads `~/.netrc`.
 - **Git tag fingerprints:** like SwiftPM's `checkIntegrity`, the commit behind each checked-out tag is recorded in `<security>/fingerprints/<identity>-<hash>.json` (the same files SwiftPM writes), and a tag that later moves is refused.
 - **swift-syntax prebuilts:** SwiftPM still applies them after `swx` resolves. A macro build took 3.5 s of CPU instead of 55 s.
+- **Xcode configuration:** `registries.json` and `mirrors.json` are read from the workspace's `xcshareddata/swiftpm/configuration`, where Xcode keeps them; registry packages in projects resolve exactly as xcodebuild does.
 - **Mixed use:**
   - `swift package update` works on top of `swx` checkouts.
   - `xcodebuild` builds offline from `swx`-prepared `SourcePackages`.
@@ -216,6 +217,7 @@ Scripts/compare-registry-signing.sh                   # signed releases vs Swift
 Scripts/compare-fingerprints.sh                       # git tag fingerprints vs SwiftPM, and a moved tag refused by both
 Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTypes app vs xcodebuild (macOS with Xcode)
 Scripts/compare-xcode-apps.sh                         # iOS app + widget + watch app project: resolution vs xcodebuild, build, launch
+Scripts/compare-xcode-registry.sh                     # registry packages in an Xcode project vs xcodebuild
 swx debug manifest-parity --candidate xcode …         # Xcode ManifestAPI evaluation vs dump-package on the corpus
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
@@ -246,6 +248,5 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 
 ## Not yet supported
 
-- **Registry packages in Xcode projects** use the same code path but haven't been compared against Xcode.
 - **Multi-root workspaces.**
 

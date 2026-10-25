@@ -42,10 +42,15 @@ public struct RegistryConfiguration: Sendable {
 
     /// The shared configuration in `configurationDirectory`, overlaid by the package's.
     public static func load(packageDirectory: URL, configurationDirectory: URL) throws -> RegistryConfiguration {
+        try Self.load(localDirectory: packageDirectory.appendingPathComponent(Path.configurationDirectory), configurationDirectory: configurationDirectory)
+    }
+
+    /// The shared configuration overlaid by the one in `localDirectory` (Xcode keeps it in the
+    /// workspace's `xcshareddata/swiftpm/configuration`).
+    public static func load(localDirectory: URL, configurationDirectory: URL) throws -> RegistryConfiguration {
         var configuration = RegistryConfiguration()
         configuration.merge(try Self.read(configurationDirectory.appendingPathComponent(Path.file)))
-        let local = packageDirectory.appendingPathComponent(Path.configurationDirectory).appendingPathComponent(Path.file)
-        configuration.merge(try Self.read(local))
+        configuration.merge(try Self.read(localDirectory.appendingPathComponent(Path.file)))
         return configuration
     }
 

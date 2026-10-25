@@ -26,8 +26,13 @@ struct DependencyMirrors: Sendable {
 
     /// Shared (`~/.swiftpm/configuration`) mirrors overlaid by the package's own (`.swiftpm`).
     static func load(for packageDirectory: URL, sharedDirectory: URL) -> DependencyMirrors {
+        Self.load(localDirectory: packageDirectory.appendingPathComponent(Path.configuration), sharedDirectory: sharedDirectory)
+    }
+
+    /// Shared mirrors overlaid by those in `localDirectory` (Xcode: `xcshareddata/swiftpm/configuration`).
+    static func load(localDirectory: URL, sharedDirectory: URL) -> DependencyMirrors {
         let shared = sharedDirectory.appendingPathComponent(Path.file)
-        let local = packageDirectory.appendingPathComponent(Path.configuration).appendingPathComponent(Path.file)
+        let local = localDirectory.appendingPathComponent(Path.file)
         let merged = Self.read(shared).merging(Self.read(local)) { $1 }
         return DependencyMirrors(mirrors: merged)
     }

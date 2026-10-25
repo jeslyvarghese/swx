@@ -262,7 +262,7 @@ public actor RegistrySource {
         if let signature = release.signature {
             signer = try await self.check(signature: signature.bytes, format: signature.format, content: content, subject: "\(identity) \(version)", identity: identity, policy: policy)
         } else {
-            try await self.apply(policy.onUnsigned, message: "\(identity) version \(version) from \(release.registry.url.absoluteString) is not signed")
+            try await self.apply(policy.onUnsigned, message: "\(identity) version \(version) source archive from \(release.registry.url.absoluteString) is not signed")
             signer = nil
         }
         try await self.signingEntities.validate(identity, version: version, signingEntity: signer, registry: release.registry.url.absoluteString)
@@ -275,7 +275,7 @@ public actor RegistrySource {
         guard release.signature != nil else {
             // Unsigned releases only prompt here; the archive check already warned.
             if policy.onUnsigned == .prompt {
-                try await self.apply(.prompt, message: "\(identity) version \(version) from \(release.registry.url.absoluteString) is not signed")
+                try await self.apply(.prompt, message: "\(identity) version \(version) source archive from \(release.registry.url.absoluteString) is not signed")
             }
             return
         }

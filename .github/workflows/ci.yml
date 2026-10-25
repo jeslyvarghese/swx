@@ -32,6 +32,8 @@ jobs:
         run: Scripts/compare-apple-manifest.sh .build/release/swx
       - name: Watch app, widget extension and root package folders against Xcode
         run: Scripts/compare-xcode-apps.sh .build/release/swx
+      - name: Registry packages in Xcode projects against xcodebuild
+        run: Scripts/compare-xcode-registry.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04

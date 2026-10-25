@@ -214,6 +214,8 @@ public struct Workspace: Sendable {
         case xcode(Manifest, rootPackages: [URL])
     }
 
+    private static let xcodeConfigurationDirectory = "configuration"
+
     /// Xcode always writes `Package.resolved` v3.
     private static let xcodeToolsVersion = "6.0.0"
 
@@ -229,6 +231,8 @@ public struct Workspace: Sendable {
 
         case .xcodeProject(let url, let sourcePackages):
             let project = try await XcodeProjectReader.read(url)
+            // Xcode keeps registries.json and mirrors.json next to the shared Package.resolved.
+            let xcodeConfiguration = project.resolvedFile.deletingLastPathComponent().appendingPathComponent(Self.xcodeConfigurationDirectory, isDirectory: true)
 
             // Root packages count with their manifests: in the origin hash, and (by their lowest tools
             // version) in the lockfile format; Xcode alone writes v3.
@@ -257,11 +261,8 @@ public struct Workspace: Sendable {
                 originHash: originHash,
                 layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages, pathStyle: .symlinksResolved),
                 source: .xcode(manifest, rootPackages: project.rootPackages),
-                mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent(), sharedDirectory: self.options.swiftPM.configurationDirectory),
-                registries: try RegistryConfiguration.load(
-                    packageDirectory: url.deletingLastPathComponent(),
-                    configurationDirectory: self.options.swiftPM.configurationDirectory
-                )
+                mirrors: DependencyMirrors.load(localDirectory: xcodeConfiguration, sharedDirectory: self.options.swiftPM.configurationDirectory),
+                registries: try RegistryConfiguration.load(localDirectory: xcodeConfiguration, configurationDirectory: self.options.swiftPM.configurationDirectory)
             )
         }
     }
