@@ -178,14 +178,45 @@ public struct Manifest: Sendable, Codable, Hashable {
             case application
         }
 
+        /// What `.iOSApplication(…)` declares (AppleProductTypes), for project generation.
+        public struct ApplicationSettings: Sendable, Codable, Hashable {
+            public var bundleIdentifier: String?
+            public var teamIdentifier: String?
+            public var displayVersion: String?
+            public var bundleVersion: String?
+            /// `phone`, `pad`, `mac`, in declaration order.
+            public var deviceFamilies: [String]
+            /// `portrait`, `landscapeLeft`, …, in declaration order (conditions dropped).
+            public var interfaceOrientations: [String]
+
+            public init(
+                bundleIdentifier: String?,
+                teamIdentifier: String?,
+                displayVersion: String?,
+                bundleVersion: String?,
+                deviceFamilies: [String],
+                interfaceOrientations: [String]
+            ) {
+                self.bundleIdentifier = bundleIdentifier
+                self.teamIdentifier = teamIdentifier
+                self.displayVersion = displayVersion
+                self.bundleVersion = bundleVersion
+                self.deviceFamilies = deviceFamilies
+                self.interfaceOrientations = interfaceOrientations
+            }
+        }
+
         public var name: String
         public var targets: [String]
         public var kind: Kind
+        /// Set for application products only.
+        public var application: ApplicationSettings?
 
-        public init(name: String, targets: [String], kind: Kind = .library) {
+        public init(name: String, targets: [String], kind: Kind = .library, application: ApplicationSettings? = nil) {
             self.name = name
             self.targets = targets
             self.kind = kind
+            self.application = application
         }
     }
 

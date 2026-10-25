@@ -236,14 +236,37 @@ enum SerializedManifestDecoder {
         }
     }
 
+    private enum ApplicationKey {
+        static let bundleIdentifier = "bundleIdentifier"
+        static let teamIdentifier = "teamIdentifier"
+        static let displayVersion = "displayVersion"
+        static let bundleVersion = "bundleVersion"
+        static let deviceFamilies = "supportedDeviceFamilies"
+        static let orientations = "supportedInterfaceOrientations"
+    }
+
     /// AppleProductTypes products serialize as executables carrying an `iOSAppInfo` setting.
     private static func product(_ json: [String: Any]) -> Manifest.Product {
         let name = json[Key.name] as? String ?? ""
         let targets = json[Key.targets] as? [String] ?? []
         let type = Self.enumCase(json[Key.productType])?.0
         let settings = json[Key.settings] as? [[String: Any]] ?? []
-        if settings.contains(where: { $0[Self.applicationSetting] != nil }) {
-            return Manifest.Product(name: name, targets: targets, kind: .application)
+        if let info = settings.lazy.compactMap({ $0[Self.applicationSetting] as? [String: Any] }).first {
+            // Each setting is `{"<name>": {"_0": value}}`.
+            func value(_ key: String) -> String? {
+                settings.lazy.compactMap { ($0[key] as? [String: Any])?[Key.payload] as? String }.first
+            }
+            let appInfo = info[Key.payload] as? [String: Any] ?? [:]
+            let orientations = (appInfo[ApplicationKey.orientations] as? [Any] ?? []).compactMap { Self.enumCase($0)?.0 }
+            let application = Manifest.Product.ApplicationSettings(
+                bundleIdentifier: value(ApplicationKey.bundleIdentifier),
+                teamIdentifier: value(ApplicationKey.teamIdentifier),
+                displayVersion: value(ApplicationKey.displayVersion),
+                bundleVersion: value(ApplicationKey.bundleVersion),
+                deviceFamilies: appInfo[ApplicationKey.deviceFamilies] as? [String] ?? [],
+                interfaceOrientations: orientations
+            )
+            return Manifest.Product(name: name, targets: targets, kind: .application, application: application)
         }
         return Manifest.Product(name: name, targets: targets, kind: type.flatMap(Manifest.Product.Kind.init(rawValue:)) ?? .library)
     }

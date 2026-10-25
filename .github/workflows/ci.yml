@@ -34,6 +34,8 @@ jobs:
         run: Scripts/compare-xcode-apps.sh .build/release/swx
       - name: Registry packages in Xcode projects against xcodebuild
         run: Scripts/compare-xcode-registry.sh .build/release/swx
+      - name: Generated Xcode projects build
+        run: Scripts/check-xcode-generate.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04

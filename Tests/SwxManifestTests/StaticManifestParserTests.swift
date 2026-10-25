@@ -201,7 +201,11 @@ struct StaticManifestParserTests {
             targets: [.executableTarget(name: "AppModule", path: ".")]
         )
         """))
-        #expect(manifest.products == [Manifest.Product(name: "HelloApp", targets: ["AppModule"], kind: .application)])
+        let settings = Manifest.Product.ApplicationSettings(
+            bundleIdentifier: "dev.swx.HelloApp", teamIdentifier: nil, displayVersion: nil, bundleVersion: nil,
+            deviceFamilies: ["pad", "phone"], interfaceOrientations: ["portrait"]
+        )
+        #expect(manifest.products == [Manifest.Product(name: "HelloApp", targets: ["AppModule"], kind: .application, application: settings)])
     }
 
     // MARK: Declining (always safe)

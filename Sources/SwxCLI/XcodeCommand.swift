@@ -7,7 +7,7 @@ struct XcodeCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "xcode",
         abstract: "Resolve Swift packages of Xcode projects and workspaces.",
-        subcommands: [XcodeResolve.self, XcodeUpdate.self]
+        subcommands: [XcodeResolve.self, XcodeUpdate.self, XcodeGenerate.self]
     )
 }
 
@@ -67,5 +67,28 @@ struct XcodeUpdate: AsyncParsableCommand {
 
     func run() async throws {
         try await XcodeResolve.resolve(self.options, mode: .update)
+    }
+}
+
+/// `swx xcode generate`: an Xcode project for a package's AppleProductTypes apps.
+struct XcodeGenerate: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "generate",
+        abstract: "Generate an .xcodeproj for the package's .iOSApplication products (via XcodeGen)."
+    )
+
+    private static let defaultDeploymentTarget = "17.0"
+
+    @Option(name: .customLong("ios-deployment-target"), help: "The iOS deployment target of the generated targets.")
+    var deploymentTarget: String = Self.defaultDeploymentTarget
+
+    @OptionGroup var global: GlobalOptions
+
+    func run() async throws {
+        let generator = XcodeProjectGenerator(options: self.global.workspaceOptions(), packageDirectory: self.global.packageURL)
+        let project = try await CommandSupport.reportingErrors {
+            try await generator.generate(deploymentTarget: self.deploymentTarget)
+        }
+        print("generated \(project.path)")
     }
 }

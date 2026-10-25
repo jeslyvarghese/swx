@@ -47,6 +47,7 @@ swx run   --platform ios --destination device --team ABCDE12345 HelloApp
 swx test  --platform watchos                       # package tests on a watchOS simulator
 
 # Xcode projects
+swx xcode generate                 # an .xcodeproj for the package's .iOSApplication products (via XcodeGen)
 swx xcode resolve --source-packages SourcePackages
 xcodebuild -clonedSourcePackagesDirPath SourcePackages -disableAutomaticPackageResolution \
            -onlyUsePackageVersionsFromResolvedFile …
@@ -220,6 +221,7 @@ Scripts/compare-fingerprints.sh                       # git tag fingerprints vs 
 Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTypes app vs xcodebuild (macOS with Xcode)
 Scripts/compare-xcode-apps.sh                         # iOS app + widget + watch app project: resolution vs xcodebuild, build, launch
 Scripts/compare-xcode-registry.sh                     # registry packages in an Xcode project vs xcodebuild
+Scripts/check-xcode-generate.sh                       # swx xcode generate: generate, resolve with swx, build offline, check Info.plist
 swx debug manifest-parity --candidate xcode …         # Xcode ManifestAPI evaluation vs dump-package on the corpus
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package

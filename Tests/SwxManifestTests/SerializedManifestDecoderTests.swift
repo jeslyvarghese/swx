@@ -73,3 +73,49 @@ struct SerializedManifestDecoderTests {
         #expect(!ManifestCompiler.needsXcode("import PackageDescription\n// import AppleProductTypes is not needed\n"))
     }
 }
+
+struct ApplicationSettingsParityTests {
+    private let manifest = """
+    // swift-tools-version: 5.9
+    import PackageDescription
+    import AppleProductTypes
+
+    let package = Package(
+        name: "Hello",
+        platforms: [.iOS("17.0")],
+        products: [
+            .iOSApplication(
+                name: "Hello",
+                targets: ["Hello"],
+                bundleIdentifier: "com.example.hello",
+                teamIdentifier: "TEAM42",
+                displayVersion: "1.2",
+                bundleVersion: "7",
+                appIcon: .placeholder(icon: .cloud),
+                accentColor: .presetColor(.blue),
+                supportedDeviceFamilies: [.pad, .phone],
+                supportedInterfaceOrientations: [.portrait, .landscapeRight, .portraitUpsideDown(.when(deviceFamilies: [.pad]))]
+            ),
+        ],
+        targets: [.executableTarget(name: "Hello")]
+    )
+    """
+
+    /// The static parser and Xcode's ManifestAPI read the same app settings.
+    @Test func readersAgreeOnApplicationSettings() async throws {
+        let parsed = try #require(StaticManifestParser.parse(self.manifest, environment: .host(compilerVersion: ToolsVersion(6, 4))))
+        let application = try #require(parsed.products.first?.application)
+        #expect(application.bundleIdentifier == "com.example.hello")
+        #expect(application.teamIdentifier == "TEAM42")
+        #expect(application.deviceFamilies == ["pad", "phone"])
+        #expect(application.interfaceOrientations == ["portrait", "landscapeRight", "portraitUpsideDown"])
+
+        // Compare with real evaluation where Xcode is installed.
+        guard await ManifestCompiler.directory(of: .xcode) != nil else { return }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("swx-app-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let evaluated = try await ManifestCompiler.evaluate(contents: self.manifest, packageDirectory: directory, api: .xcode)
+        #expect(evaluated.products == parsed.products)
+    }
+}

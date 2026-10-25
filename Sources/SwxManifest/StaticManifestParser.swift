@@ -494,7 +494,60 @@ public enum StaticManifestParser {
                   let targets = arguments[Label.targets].flatMap({ self.list($0, self.string) }) else {
                 return nil
             }
-            return Manifest.Product(name: name, targets: targets, kind: kind)
+            guard kind == .application else {
+                return Manifest.Product(name: name, targets: targets, kind: kind)
+            }
+            guard let application = self.applicationSettings(arguments) else { return nil }
+            return Manifest.Product(name: name, targets: targets, kind: kind, application: application)
+        }
+
+        private enum ApplicationLabel {
+            static let bundleIdentifier = "bundleIdentifier"
+            static let teamIdentifier = "teamIdentifier"
+            static let displayVersion = "displayVersion"
+            static let bundleVersion = "bundleVersion"
+            static let deviceFamilies = "supportedDeviceFamilies"
+            static let orientations = "supportedInterfaceOrientations"
+        }
+
+        /// `.iOSApplication` settings; any given but unreadable setting declines the manifest.
+        private func applicationSettings(_ arguments: Arguments) -> Manifest.Product.ApplicationSettings? {
+            func text(_ label: String) -> String?? {
+                guard let expression = arguments[label] else { return .some(nil) }
+                return self.string(expression).map { .some($0) }
+            }
+            func cases(_ label: String) -> [String]? {
+                guard let expression = arguments[label] else { return [] }
+                return self.list(expression, self.enumCaseName)
+            }
+            guard let bundleIdentifier = text(ApplicationLabel.bundleIdentifier),
+                  let teamIdentifier = text(ApplicationLabel.teamIdentifier),
+                  let displayVersion = text(ApplicationLabel.displayVersion),
+                  let bundleVersion = text(ApplicationLabel.bundleVersion),
+                  let deviceFamilies = cases(ApplicationLabel.deviceFamilies),
+                  let orientations = cases(ApplicationLabel.orientations) else {
+                return nil
+            }
+            return Manifest.Product.ApplicationSettings(
+                bundleIdentifier: bundleIdentifier,
+                teamIdentifier: teamIdentifier,
+                displayVersion: displayVersion,
+                bundleVersion: bundleVersion,
+                deviceFamilies: deviceFamilies,
+                interfaceOrientations: orientations
+            )
+        }
+
+        /// `.phone`, or `.portrait(.when(…))`: the case name.
+        private func enumCaseName(_ expression: ExprSyntax) -> String? {
+            if let access = expression.as(MemberAccessExprSyntax.self), access.base == nil {
+                return access.declName.baseName.text
+            }
+            guard let call = expression.as(FunctionCallExprSyntax.self),
+                  let access = call.calledExpression.as(MemberAccessExprSyntax.self), access.base == nil else {
+                return nil
+            }
+            return access.declName.baseName.text
         }
 
         private func target(_ expression: ExprSyntax) -> Manifest.Target? {
