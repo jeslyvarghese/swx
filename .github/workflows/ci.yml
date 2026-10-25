@@ -36,6 +36,22 @@ jobs:
         run: Scripts/compare-xcode-registry.sh .build/release/swx
       - name: Generated Xcode projects build
         run: Scripts/check-xcode-generate.sh .build/release/swx
+      - name: Apple platforms (device builds, simulator tests)
+        run: Scripts/check-apple-platforms.sh .build/release/swx ios watchos tvos visionos
+
+  benchmarks:
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark against SwiftPM
+        run: |
+          swift build -c release
+          python3 -I Scripts/benchmark.py Tests/Fixtures/sample --swx .build/release/swx --runs 3 --json benchmark.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark
+          path: benchmark.json
 
   linux:
     runs-on: ubuntu-24.04
