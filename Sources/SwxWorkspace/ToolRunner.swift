@@ -95,7 +95,7 @@ public struct ToolRunner: Sendable {
         let toolchain = try await Toolchain.detect(store: self.store)
 
         // An exact version built before needs no network at all.
-        if let exact = parsed.version.flatMap({ Version(tag: $0) }),
+        if let exact = parsed.version.flatMap(Self.exactVersion),
            let cached = self.cachedBuild(reference.identity.description, version: exact, toolchainKey: toolchain.key, executable: requested) {
             return cached
         }
@@ -168,11 +168,23 @@ public struct ToolRunner: Sendable {
         guard let request else {
             return releases.last
         }
-        if let exact = Version(tag: request) {
+        if let exact = Self.exactVersion(request) {
             return tagged.last { $0.version == exact }
         }
-        let prefix = request.hasPrefix("v") ? String(request.dropFirst()) : request
+        let prefix = Self.withoutTagPrefix(request)
         return releases.last { $0.version.description.hasPrefix(prefix + ".") }
+    }
+
+    private static let tagPrefix = "v"
+
+    /// A full `X.Y.Z` (optionally `v`-prefixed) is exact; a shorter request (`1.2`) means the
+    /// newest release under it.
+    static func exactVersion(_ request: String) -> Version? {
+        Version(Self.withoutTagPrefix(request), parsing: .strict)
+    }
+
+    private static func withoutTagPrefix(_ request: String) -> String {
+        request.hasPrefix(Self.tagPrefix) ? String(request.dropFirst(Self.tagPrefix.count)) : request
     }
 
     static func pickExecutable(in manifest: Manifest, requested: String?, hint: String) throws -> String {
