@@ -1,0 +1,77 @@
+name: Release
+
+# A tag such as v0.1.0 builds the binaries Scripts/install.sh downloads and publishes them,
+# with their checksums, as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          swift --version
+      - name: Build a universal binary
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+          mkdir -p dist
+          cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/swx" dist/swx
+      - name: Check the version matches the tag
+        run: test "$(dist/swx --version)" = "${GITHUB_REF_NAME#v}"
+      - name: Package
+        run: |
+          strip -x dist/swx
+          tar -czf swx-macos-universal.tar.gz -C dist swx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swx-macos-universal
+          path: swx-macos-universal.tar.gz
+
+  linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.4.1-noble
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Static Linux SDK
+        # Checksum of the published 0.1.0 bundle, measured when it was adopted.
+        run: swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_CHECKSUM"
+        env:
+          STATIC_SDK_URL: https://download.swift.org/swift-6.4.1-release/static-sdk/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+          STATIC_SDK_CHECKSUM: cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
+      - name: Build a fully static binary
+        run: |
+          binary="$(Scripts/build-linux-static.sh ${{ matrix.arch }} | tail -1)"
+          mkdir -p dist
+          cp "$binary" dist/swx
+      - name: Package
+        # Already stripped at link time: the runner's strip can't read the aarch64 binary.
+        run: |
+          tar -czf swx-linux-${{ matrix.arch }}.tar.gz -C dist swx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swx-linux-${{ matrix.arch }}
+          path: swx-linux-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: [macos, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Checksums
+        run: sha256sum swx-*.tar.gz > SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes swx-*.tar.gz SHA256SUMS

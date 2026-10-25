@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide — swx</title>
+<meta name="description" content="Installing and using swx: dependencies, builds, Apple platforms, Xcode projects, toolchains, tools and scripts.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8572a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' font-weight='700' text-anchor='middle' fill='white'%3Esx%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="wrap">
+        <a class="brand" href="./">swx<span>_</span></a>
+        <nav class="site-nav">
+            <a href="./#speed">Benchmarks</a>
+            <a href="./#compatibility">Compatibility</a>
+            <a href="guide.html" aria-current="page">Guide</a>
+            <a href="https://github.com/jeslyvarghese/swx">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap guide">
+    <nav class="toc" aria-label="Guide sections">
+        <ol>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#dependencies">Dependencies</a></li>
+            <li><a href="#build">Build, test, run</a></li>
+            <li><a href="#apple">Apple platforms</a></li>
+            <li><a href="#xcode">Xcode projects</a></li>
+            <li><a href="#toolchains">Toolchains</a></li>
+            <li><a href="#tools">Tools</a></li>
+            <li><a href="#scripts">Scripts</a></li>
+            <li><a href="#environment">Environment</a></li>
+            <li><a href="#verification">Verification</a></li>
+        </ol>
+    </nav>
+
+    <article>
+        <section id="install">
+            <h2>Install</h2>
+            <div class="command">
+                <code id="install-command">curl -fsSL https://jeslyvarghese.github.io/swx/install.sh | sh</code>
+                <button class="copy" type="button" data-copy="install-command">Copy</button>
+            </div>
+            <p>
+                The script downloads the release for your OS and CPU, checks it against the release's
+                <code>SHA256SUMS</code>, and installs <code>swx</code> and <code>swift-x</code> into
+                <code>~/.local/bin</code>. With <code>swift-x</code> on your <code>PATH</code>,
+                <code>swift x build</code> works too. <code>SWX_VERSION=v0.1.0</code> pins a release and
+                <code>SWX_INSTALL_DIR</code> changes the location.
+            </p>
+            <p>From source, with Swift 6.1 or later:</p>
+<pre>git clone https://github.com/jeslyvarghese/swx && cd swx
+swift build -c release
+cp .build/release/swx ~/.local/bin/
+ln -s swx ~/.local/bin/swift-x   <span class="c"># optional: enables `swift x …`</span></pre>
+            <p>swx runs SwiftPM for builds, so a Swift toolchain must be installed (or let <code>swx toolchain install</code> fetch one).</p>
+        </section>
+
+        <section id="dependencies">
+            <h2>Dependencies</h2>
+            <p>A drop-in for <code>swift package resolve</code> and <code>update</code>, with the same flags. Any other <code>package</code> subcommand is forwarded to SwiftPM.</p>
+<pre>swx package resolve
+swx package update
+swx package show-dependencies   <span class="c"># forwarded to `swift package`</span></pre>
+            <p>
+                The result is what SwiftPM would have written: the same <code>Package.resolved</code>, the
+                same <code>.build/checkouts</code> and <code>.build/workspace-state.json</code>. A later
+                <code>swift build</code> finds everything resolved and does no network work.
+            </p>
+        </section>
+
+        <section id="build">
+            <h2>Build, test, run</h2>
+            <p>swx resolves first, then hands over to SwiftPM with resolution disabled.</p>
+<pre>swx build -c release
+swx test
+swx run MyTool --flag</pre>
+            <p>
+                <code>SWX_BUILD_CACHE=1</code> shares compiled dependencies between projects through the
+                compiler's content-addressed cache (with SwiftPM's native build system): a second project
+                that uses swift-collections built in 1.7 s instead of 6.4 s.
+            </p>
+        </section>
+
+        <section id="apple">
+            <h2>Apple platforms</h2>
+            <p>
+                Packages that declare apps with <code>AppleProductTypes</code> (<code>.iOSApplication(…)</code>,
+                as Xcode and Swift Playgrounds read them) build, run and test on simulators and devices.
+                swx uses <code>xcodebuild</code>, <code>simctl</code> and <code>devicectl</code> underneath,
+                so this needs macOS with Xcode.
+            </p>
+<pre>swx devices                                       <span class="c"># simulators and paired devices</span>
+swx build --platform ios                          <span class="c"># generic build when no simulator exists</span>
+swx run   --platform ios HelloApp                 <span class="c"># build, install, launch, stream console</span>
+swx run   --platform ios --destination device --team ABCDE12345 HelloApp
+swx test  --platform watchos                      <span class="c"># package tests on a watchOS simulator</span></pre>
+            <p>Platforms: <code>ios</code>, <code>watchos</code>, <code>tvos</code>, <code>visionos</code>.</p>
+        </section>
+
+        <section id="xcode">
+            <h2>Xcode projects</h2>
+            <p>
+                Xcode's own resolution can't be replaced, but it can be fed. <code>swx xcode resolve</code>
+                prepares <code>SourcePackages</code> exactly as Xcode would (same pins, <code>originHash</code>
+                and state), including projects with registries, mirrors and local package folders.
+            </p>
+<pre>swx xcode resolve --source-packages SourcePackages
+xcodebuild -clonedSourcePackagesDirPath SourcePackages \
+           -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile …</pre>
+            <p>When an app outgrows a package, <code>swx xcode generate</code> writes an <code>.xcodeproj</code> for its <code>.iOSApplication</code> products (through XcodeGen, fetched like any swx tool).</p>
+        </section>
+
+        <section id="toolchains">
+            <h2>Toolchains</h2>
+            <p>swift.org releases and snapshots, installed per user. Every command honours <code>.swift-version</code> and installs the pinned toolchain on demand.</p>
+<pre>swx toolchain list --available
+swx toolchain install 6.4
+swx toolchain install main-snapshot   <span class="c"># also 6.5-snapshot, or a snapshot tag</span>
+swx toolchain use 6.4                 <span class="c"># writes .swift-version</span>
+swx toolchain which</pre>
+        </section>
+
+        <section id="tools">
+            <h2>Tools</h2>
+            <p>Run executables from packages without installing them, like <code>uvx</code> or Mint. Builds are cached per revision and toolchain, so a pinned tool starts in about 20 ms.</p>
+<pre>swx tool run swiftformat@0.54.0 --version
+swx tool run realm/SwiftLint lint
+swx tool install swiftlint     <span class="c"># links into ~/.local/bin</span></pre>
+        </section>
+
+        <section id="scripts">
+            <h2>Scripts</h2>
+            <p>Single-file scripts declare their dependencies in a comment; products are inferred from the imports. A warm start takes about 10 ms.</p>
+<pre>#!/usr/bin/env -S swx run
+// swx-dependencies:
+// .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
+
+import ArgumentParser</pre>
+<pre>swx run greet.swift Ada</pre>
+        </section>
+
+        <section id="environment">
+            <h2>Environment</h2>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>SWX_CACHE_DIR</code></td><td>The shared store. Default <code>~/.cache/swx</code>, or <code>$XDG_CACHE_HOME/swx</code>.</td></tr>
+                        <tr><td><code>SWX_HOME</code></td><td>Toolchains. Default <code>~/.local/share/swx</code>.</td></tr>
+                        <tr><td><code>SWX_TRACE=1</code></td><td>A timestamped timeline of every subprocess.</td></tr>
+                        <tr><td><code>SWX_STATIC_MANIFESTS=0</code></td><td>Always evaluate manifests with the compiler.</td></tr>
+                        <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>
+                        <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache; <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="verification">
+            <h2>Verification</h2>
+            <p>
+                Compatibility is checked differentially: each script runs SwiftPM or Xcode and swx on the same
+                input and compares what they write. The full list is in the
+                <a href="https://github.com/jeslyvarghese/swx#verification">README</a>; for example:
+            </p>
+<pre>Scripts/compare-with-swiftpm.sh &lt;package-dir&gt;   <span class="c"># Package.resolved, workspace-state.json, checkouts</span>
+Scripts/compare-registry-signing.sh             <span class="c"># signed registry releases: trusted, untrusted, tampered</span>
+Scripts/compare-xcode-apps.sh                   <span class="c"># an app + widget + watch app project vs xcodebuild</span>
+swx debug manifest-parity --cache-path &lt;dir&gt;    <span class="c"># the static parser vs dump-package over a corpus</span></pre>
+            <p>Found a difference from SwiftPM? That's a bug — <a href="https://github.com/jeslyvarghese/swx/issues/new/choose">please report it</a>.</p>
+        </section>
+    </article>
+</main>
+
+<footer class="site-footer">
+    <div class="wrap">
+        <span>swx is licensed under the Apache License v2.0 with Runtime Library Exception.</span>
+        <span><a href="https://github.com/jeslyvarghese/swx">Source</a> · <a href="https://github.com/jeslyvarghese/swx/releases">Releases</a> · <a href="https://github.com/jeslyvarghese/swx/issues">Issues</a></span>
+    </div>
+</footer>
+
+<script src="copy.js"></script>
+</body>
+</html>

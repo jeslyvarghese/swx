@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>swx — a fast, drop-in companion to SwiftPM</title>
+<meta name="description" content="swx resolves, builds and runs Swift packages several times faster than SwiftPM, and writes the same Package.resolved, checkouts and workspace state, byte for byte.">
+<meta property="og:title" content="swx — a fast, drop-in companion to SwiftPM">
+<meta property="og:description" content="What uv is to pip, for Swift: SwiftPM's own files, byte for byte, several times faster.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8572a'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' font-weight='700' text-anchor='middle' fill='white'%3Esx%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="wrap">
+        <a class="brand" href="./">swx<span>_</span></a>
+        <nav class="site-nav">
+            <a href="#speed">Benchmarks</a>
+            <a href="#compatibility">Compatibility</a>
+            <a href="guide.html">Guide</a>
+            <a href="https://github.com/jeslyvarghese/swx">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="wrap hero">
+        <p class="eyebrow">What uv is to pip, for Swift</p>
+        <h1>SwiftPM's own files, <em>several times faster.</em></h1>
+        <p class="lede">
+            swx resolves, builds and runs Swift packages and writes the same <code>Package.resolved</code>,
+            <code>.build/checkouts</code> and <code>workspace-state.json</code> as SwiftPM, byte for byte.
+            Mix <code>swx</code>, <code>swift</code> and Xcode freely; there is nothing to migrate.
+        </p>
+        <div class="command">
+            <code id="install-command">curl -fsSL https://jeslyvarghese.github.io/swx/install.sh | sh</code>
+            <button class="copy" type="button" data-copy="install-command">Copy</button>
+        </div>
+        <p class="note">macOS 13+ (universal) and Linux (static, x86_64 and aarch64). Or build from source: <code>swift build -c release</code>.</p>
+    </div>
+
+    <section>
+        <div class="wrap">
+            <div class="grid">
+                <div class="card">
+                    <div class="figure">7×</div>
+                    <h3>Faster cold resolves</h3>
+                    <p>Vapor and Fluent's 32 packages resolve in 10.9 s instead of 77 s, from empty caches.</p>
+                </div>
+                <div class="card">
+                    <div class="figure">0</div>
+                    <h3>Bytes of difference</h3>
+                    <p>Every benchmark run produced byte-identical <code>Package.resolved</code> and <code>workspace-state.json</code>. CI diffs them against SwiftPM.</p>
+                </div>
+                <div class="card">
+                    <div class="figure">1</div>
+                    <h3>Tool instead of five</h3>
+                    <p>Dependencies, toolchains, CLI tools, scripts with dependencies, and iOS / watchOS / tvOS / visionOS runs.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="speed">
+        <div class="wrap">
+            <h2>Benchmarks</h2>
+            <p class="section-lede">
+                Vapor + Fluent (32 packages), Apple Silicon, macOS 27, Swift 6.4. Both tools start from their own
+                empty caches; <code>Scripts/benchmark.py</code> reproduces the runs.
+            </p>
+            <div class="bench">
+                <div class="bench-row">
+                    <h3><span>Cold resolve, empty caches</span> <span class="speedup">7×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">77 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 14.2%"><div class="fill"></div><span class="value">10.9 s</span></div></div>
+                </div>
+                <div class="bench-row">
+                    <h3><span>No lockfile, warm cache</span> <span class="speedup">8×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">13.4 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 11.9%"><div class="fill"></div><span class="value">1.6 s</span></div></div>
+                </div>
+                <div class="bench-row">
+                    <h3><span><code>update</code>, warm cache</span> <span class="speedup">5×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">8.8 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 18.2%"><div class="fill"></div><span class="value">1.6 s</span></div></div>
+                </div>
+                <div class="bench-row">
+                    <h3><span>Fresh clone: lockfile, no <code>.build</code></span> <span class="speedup">15×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">1.5 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 6.7%"><div class="fill"></div><span class="value">0.10 s</span></div></div>
+                </div>
+                <div class="bench-row">
+                    <h3><span>No-op</span> <span class="speedup">13×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">0.26 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 7.7%"><div class="fill"></div><span class="value">0.02 s</span></div></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <div class="wrap">
+            <h2>One tool for the whole job</h2>
+            <p class="section-lede">Same commands and flags as SwiftPM where they overlap; anything swx doesn't handle is forwarded to <code>swift package</code>.</p>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Job</th><th>Usually done with</th><th>swx</th></tr></thead>
+                    <tbody>
+                        <tr><td>Resolve and update dependencies</td><td><code>swift package resolve</code></td><td><code>swx package resolve</code></td></tr>
+                        <tr><td>Build, test, run</td><td><code>swift build</code></td><td><code>swx build</code> (resolves first, much faster)</td></tr>
+                        <tr><td>Xcode project dependencies</td><td><code>xcodebuild -resolvePackageDependencies</code></td><td><code>swx xcode resolve</code></td></tr>
+                        <tr><td>Toolchains</td><td>swiftly</td><td><code>swx toolchain install 6.4</code>, <code>.swift-version</code></td></tr>
+                        <tr><td>CLI tools from packages</td><td>Mint</td><td><code>swx tool run swiftformat@0.54.0</code></td></tr>
+                        <tr><td>Scripts with dependencies</td><td>—</td><td><code>swx run script.swift</code></td></tr>
+                        <tr><td>iOS, watchOS, tvOS, visionOS</td><td>Xcode, <code>simctl</code></td><td><code>swx run --platform ios</code></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section id="compatibility">
+        <div class="wrap">
+            <h2>Byte for byte, and tested that way</h2>
+            <p class="section-lede">
+                Every claim below has a differential script that runs SwiftPM or Xcode and swx on the same input
+                and diffs what they write. CI runs them on macOS and Linux.
+            </p>
+            <ul class="checks">
+                <li><code>Package.resolved</code> v1–v3, including <code>originHash</code></li>
+                <li><code>workspace-state.json</code> v7 and <code>.build/checkouts</code></li>
+                <li>Xcode <code>SourcePackages</code>, so <code>xcodebuild</code> builds offline</li>
+                <li>Branch, revision, path and local git dependencies</li>
+                <li>Mirrors, submodules and Git LFS</li>
+                <li>Registries (SE-0292) with auth and SE-0391 signatures</li>
+                <li>Trust-on-first-use fingerprints in SwiftPM's own store</li>
+                <li>Binary targets and <code>.artifactbundleindex</code></li>
+                <li>Manifests: 0 disagreements with <code>dump-package</code> over a 364-manifest corpus</li>
+                <li>Xcode projects, workspaces and root package folders</li>
+            </ul>
+        </div>
+    </section>
+
+    <section>
+        <div class="wrap">
+            <h2>How it is fast</h2>
+            <div class="grid">
+                <div class="card"><h3>One global store</h3><p>Blobless bare clones shared by every project. Listing files at any tag is local, and copy-on-write checkouts (APFS <code>clonefile</code>, reflinks) cost almost nothing.</p></div>
+                <div class="card"><h3>Static manifests</h3><p>74% of real <code>Package.swift</code> files are read with SwiftParser instead of being compiled and run. Anything that can't be proven harmless is evaluated for real.</p></div>
+                <div class="card"><h3>Pipelined resolution</h3><p>A sans-I/O PubGrub solver; while it works, swx lists tags over HTTP (<code>ls-refs</code>), fetches likely manifests and exports checkouts in parallel.</p></div>
+                <div class="card"><h3>Lockfile fast paths</h3><p>A matching <code>originHash</code> means nothing to do. Missing checkouts are restored without running the solver.</p></div>
+            </div>
+            <p class="note"><a href="guide.html">Read the guide</a> for every command, or the <a href="https://github.com/jeslyvarghese/swx#readme">README</a> for the architecture.</p>
+        </div>
+    </section>
+</main>
+
+<footer class="site-footer">
+    <div class="wrap">
+        <span>swx is licensed under the Apache License v2.0 with Runtime Library Exception.</span>
+        <span><a href="https://github.com/jeslyvarghese/swx">Source</a> · <a href="https://github.com/jeslyvarghese/swx/releases">Releases</a> · <a href="https://github.com/jeslyvarghese/swx/issues">Issues</a></span>
+    </div>
+</footer>
+
+<script src="copy.js"></script>
+</body>
+</html>

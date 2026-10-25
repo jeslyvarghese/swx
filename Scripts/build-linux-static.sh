@@ -12,5 +12,5 @@ readonly swift="${2:-swift}"
 # Its own scratch path: building into .build would repoint .build/release at the Linux binary.
 readonly scratch=".build/linux-static"
 
-"$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" -Xswiftc -gnone
+"$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" -Xswiftc -gnone -Xlinker -s
 echo "$("$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" --show-bin-path)/swx"

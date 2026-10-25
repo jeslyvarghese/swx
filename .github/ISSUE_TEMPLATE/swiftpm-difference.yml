@@ -1,0 +1,33 @@
+name: Differs from SwiftPM or Xcode
+description: swx wrote a different Package.resolved, workspace-state.json, checkout or SourcePackages than SwiftPM or Xcode
+labels: [compatibility]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: swx version
+      description: Output of `swx --version`
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain and OS
+      description: Output of `swift --version`, and macOS / Linux distribution
+    validations:
+      required: true
+  - type: textarea
+    id: package
+    attributes:
+      label: Package
+      description: The Package.swift (or a link to a public package) that reproduces it
+      render: swift
+    validations:
+      required: true
+  - type: textarea
+    id: difference
+    attributes:
+      label: Difference
+      description: The command you ran, and a diff of the file swx wrote against SwiftPM's or Xcode's
+    validations:
+      required: true

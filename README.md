@@ -21,6 +21,14 @@ It also covers the jobs of several other tools:
 ## Install
 
 ```sh
+curl -fsSL https://jeslyvarghese.github.io/swx/install.sh | sh
+```
+
+The script installs the release for your OS and CPU (macOS universal, or a static Linux binary for x86_64 or aarch64) into `~/.local/bin`, after checking it against the release's `SHA256SUMS`. Documentation: **https://jeslyvarghese.github.io/swx/**
+
+From source:
+
+```sh
 swift build -c release
 cp .build/release/swx /usr/local/bin/
 ln -s /usr/local/bin/swx /usr/local/bin/swift-x   # optional: enables `swift x …`
