@@ -104,11 +104,19 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
 | Fresh clone (lockfile, no `.build`) | 1.5 s | 0.10 s | 15× |
 | No-op | 0.26 s | 0.02 s | 13× |
 
+**swift-argument-parser + swift-nio** (`Tests/Fixtures/sample`, medians of 3, `python3 -I Scripts/benchmark.py Tests/Fixtures/sample`):
+
+| Scenario | SwiftPM | swx | Speedup |
+|---|---|---|---|
+| Cold (empty caches) | 27.7 s | 7.3 s | 3.8× |
+| No lockfile, warm cache | 2.44 s | 0.46 s | 5.3× |
+| Fresh clone (lockfile, no `.build`) | 0.56 s | 0.03 s | 21× |
+| No-op | 0.19 s | 0.02 s | 12× |
+
 **Other measurements:**
 
 | Measurement | Result |
 |---|---|
-| swift-argument-parser + swift-nio, cold resolve | 28.8 s with SwiftPM, 8.6 s with swx |
 | Warm script start (`swx run greet.swift`) | 10 ms |
 | Pinned tool start (`swx tool run swiftformat@0.54.0`) | 20 ms |
 | Xcode project resolve (2 packages) | 4.0 s with xcodebuild, 1.4 s with swx. Pins, `originHash` and `SourcePackages` state are identical. |
@@ -131,7 +139,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
   - Replays `package.targets.append(…)` and appends to top-level `var`s.
   - Ignores code that only touches build settings.
   - Anything it can't prove harmless falls back to real evaluation.
-  - On a 90-manifest corpus of popular packages, 74% parse statically with 0 disagreements against `dump-package`.
+  - On a 364-manifest corpus (114 popular packages and their dependencies), 74% parse statically with 0 disagreements against `dump-package`.
 - **Shared binary artifacts.** Remote `binaryTarget` archives (and `.artifactbundleindex` files, resolved to the host's archive the way SwiftPM picks it) are downloaded once per checksum, verified, unzipped once into the store, and cloned into `.build/artifacts`. The downloads overlap with checkouts. SwiftPM finds them already recorded and doesn't fetch or unzip again.
 - **Content-addressed caches.**
   - Evaluated manifests are keyed by text plus toolchain.
@@ -210,7 +218,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 98 unit tests
+swift test                                            # 113 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
@@ -247,10 +255,10 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
   - PIF and the build-service API are internal and unstable.
   - `xcodebuild` already supports `AppleProductTypes` apps, signing (`-allowProvisioningUpdates`) and every destination.
   - Host builds go through SwiftPM, which also runs swift-build.
-- **`AppleProductTypes` manifests** that the static parser declines are compiled against Xcode's ManifestAPI (which ships `AppleProductTypes`), run in SwiftPM's sandbox, and decoded from PackageDescription's own serialization; the command-line SwiftPM can't import that module at all. This needs Xcode. Over the 88-manifest corpus, that path agrees with `dump-package` on every manifest (`swx debug manifest-parity --candidate xcode`).
+- **`AppleProductTypes` manifests** that the static parser declines are compiled against Xcode's ManifestAPI (which ships `AppleProductTypes`), run in SwiftPM's sandbox, and decoded from PackageDescription's own serialization; the command-line SwiftPM can't import that module at all. This needs Xcode. Over the 364-manifest corpus, that path agrees with `dump-package` on every manifest both can evaluate (`swx debug manifest-parity --candidate xcode`).
 - **The shared compilation cache** uses SwiftPM's `--enable-build-caching` where a toolchain has it (none does yet, 6.5 snapshots included). Otherwise it uses the compiler's own CAS (`-cache-compile-job`, with each package root mapped to one prefix, so dependencies compiled in one project hit in another). That works only under SwiftPM's native build system, which 6.4 marks deprecated, so it turns on when you pass `--build-system native`, or with `SWX_BUILD_CACHE=1`, which also selects it. Measured on swift-collections (release): 6.4 s for the first project, 1.7 s for the second.
 - **No long-lived `git cat-file` per repository.** A cold Vapor resolve spends 1.5 s of cumulative (parallel) time in its 128 `cat-file` calls, against 57 s in network-bound tree exports, and a warm resolve without a lockfile starts one process in total. One batched `cat-file` per step stays.
-- **Manifest evaluation** (for manifests the static parser declines) compiles the manifest against the toolchain's ManifestAPI and decodes PackageDescription's serialization, as SwiftPM's loader does internally, instead of starting `swift package dump-package`: about a third faster per cold manifest, and identical on all 88 corpus manifests (`swx debug manifest-parity --candidate toolchain`). `dump-package` remains the fallback.
+- **Manifest evaluation** (for manifests the static parser declines) compiles the manifest against the toolchain's ManifestAPI and decodes PackageDescription's serialization, as SwiftPM's loader does internally, instead of starting `swift package dump-package`: about a third faster per cold manifest, and identical on 362 of the 364 corpus manifests; the other 2 fail under `dump-package` too (`swx debug manifest-parity --candidate toolchain`). The static parser handles 267 of them identically and declines the rest, with no mismatches. `dump-package` remains the fallback.
 
 ## Not yet supported
 
