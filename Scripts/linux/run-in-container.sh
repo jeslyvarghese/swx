@@ -10,9 +10,11 @@ readonly fixtures="$(cd "$2" && pwd)"
 readonly image="docker.io/library/swift:6.4.1-noble"
 readonly root="$(cd "$(dirname "$0")/../.." && pwd)"
 readonly bin="$(mktemp -d)"
+# Its own scratch path: building into .build would repoint .build/release at the Linux binary.
+readonly scratch="$root/.build/linux-static"
 
-"$swift" build -c release --swift-sdk aarch64-swift-linux-musl --package-path "$root" -Xswiftc -gnone
-cp "$("$swift" build -c release --swift-sdk aarch64-swift-linux-musl --package-path "$root" --show-bin-path)/swx" "$bin/swx"
+"$swift" build -c release --swift-sdk aarch64-swift-linux-musl --package-path "$root" --scratch-path "$scratch" -Xswiftc -gnone
+cp "$("$swift" build -c release --swift-sdk aarch64-swift-linux-musl --package-path "$root" --scratch-path "$scratch" --show-bin-path)/swx" "$bin/swx"
 cp "$root/Scripts/linux/workflow.sh" "$bin/workflow.sh"
 
 runner=container

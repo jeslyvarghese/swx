@@ -9,6 +9,8 @@ set -euo pipefail
 
 readonly arch="${1:-aarch64}"
 readonly swift="${2:-swift}"
+# Its own scratch path: building into .build would repoint .build/release at the Linux binary.
+readonly scratch=".build/linux-static"
 
-"$swift" build -c release --swift-sdk "$arch-swift-linux-musl" -Xswiftc -gnone
-echo "$("$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --show-bin-path)/swx"
+"$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" -Xswiftc -gnone
+echo "$("$swift" build -c release --swift-sdk "$arch-swift-linux-musl" --scratch-path "$scratch" --show-bin-path)/swx"
