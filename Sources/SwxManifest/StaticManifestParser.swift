@@ -366,7 +366,8 @@ public enum StaticManifestParser {
             // Registry.
             if let idExpression = arguments[Label.id] {
                 guard let id = self.string(idExpression), let requirement = self.requirement(arguments) else { return nil }
-                return Manifest.Dependency(identity: id.lowercased(), explicitName: nil, location: .registry(identity: id), requirement: requirement, traits: traits)
+                // Registry identities keep their spelling (`dump-package` does too).
+                return Manifest.Dependency(identity: id, explicitName: nil, location: .registry(identity: id), requirement: requirement, traits: traits)
             }
 
             // Source control.

@@ -187,6 +187,13 @@ These areas are verified byte for byte against SwiftPM or Xcode:
   - LFS files are fetched once into the store and replaced in the tree (needs `git-lfs`, as SwiftPM does)
   - relative submodule URLs resolve against the package's URL, as git does; SwiftPM resolves them against its local cache, where they fail
 - **Local git repositories** (`.package(url: "file:///…")` or an absolute path) are recorded as `localSourceControl`, by path, as SwiftPM does.
+- **Package registries** (SE-0292, `.package(id: "scope.Name", …)`):
+  - `registries.json` from `--config-path` (default `~/.swiftpm/configuration`) overlaid by the package's own, with scoped and default registries and availability checks
+  - registry pins, `registryDownload` state, `.build/registry/downloads/<scope>/<name>/<version>` with `.registry-metadata`, and version-specific manifests advertised in `Link` headers
+  - archives are verified against the release checksum and SwiftPM's trust-on-first-use fingerprints in `--security-path` (default `~/.swiftpm/security`), which `swx` reads and writes in SwiftPM's format
+  - credentials as SwiftPM 6.4 finds them: `SWIFTPM_REGISTRY_TOKEN`/`_LOGIN`/`_PASSWORD`, `SWIFTPM_NETRC_DATA`, then the Keychain on macOS (`.netrc` with `--netrc`) or `.netrc` on Linux (`--netrc-file`), sent as basic or bearer auth per `registries.json`
+  - releases are immutable, so metadata and manifests are cached in the store and a lockfile restore downloads only the archives
+- **HTTPS git with `.netrc`** works through git itself, which reads `~/.netrc`.
 - **swift-syntax prebuilts:** SwiftPM still applies them after `swx` resolves. A macro build took 3.5 s of CPU instead of 55 s.
 - **Mixed use:**
   - `swift package update` works on top of `swx` checkouts.
@@ -195,11 +202,12 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 82 unit tests
+swift test                                            # 92 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)
+Scripts/compare-registry.sh                           # registries vs SwiftPM, via Scripts/test-registry.py (open and basic auth)
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```
@@ -229,7 +237,9 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 
 ## Not yet supported
 
-- **Package registries** (SE-0292), and `.netrc` auth for HTTPS git.
+- **Registry package signatures** (SE-0391) are not validated. Checksums and fingerprints are, and unsigned packages are accepted with SwiftPM's default policy (`warn`).
+- **`--replace-scm-with-registry` / `--use-registry-identity-for-scm`**, which swap git dependencies for registry ones.
+- **Registry packages in Xcode projects** use the same code path but haven't been compared against Xcode.
 - **`.artifactbundleindex` binary targets** are left to SwiftPM, which picks the archive for the host.
 - **Multi-root workspaces.**
 

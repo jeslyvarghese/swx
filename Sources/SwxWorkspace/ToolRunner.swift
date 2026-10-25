@@ -125,7 +125,13 @@ public struct ToolRunner: Sendable {
         FileSystem.makeWritable(package)
 
         // Resolve with swx (honouring the tool's own Package.resolved), then build.
-        let workspace = Workspace(options: WorkspaceOptions(root: .package(package), cacheDirectory: self.options.cacheDirectory, maximumConcurrency: self.options.maximumConcurrency, verbosity: self.options.verbosity))
+        let workspace = Workspace(options: WorkspaceOptions(
+            root: .package(package),
+            cacheDirectory: self.options.cacheDirectory,
+            maximumConcurrency: self.options.maximumConcurrency,
+            verbosity: self.options.verbosity,
+            swiftPM: self.options.swiftPM
+        ))
         _ = try await workspace.resolve(mode: .respectPins)
 
         let loader = ManifestLoader(store: self.store, toolchain: toolchain, maximumConcurrency: self.options.maximumConcurrency)

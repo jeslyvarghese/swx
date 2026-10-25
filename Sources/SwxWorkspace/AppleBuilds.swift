@@ -84,7 +84,8 @@ public struct AppleBuilds: Sendable {
             root: root,
             cacheDirectory: self.options.cacheDirectory,
             maximumConcurrency: self.options.maximumConcurrency,
-            verbosity: self.options.verbosity
+            verbosity: self.options.verbosity,
+            swiftPM: self.options.swiftPM
         ))
         _ = try await workspace.resolve(mode: .respectPins)
 

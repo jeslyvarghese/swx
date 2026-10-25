@@ -1,11 +1,14 @@
 import Foundation
 import SwxCore
+import SwxSystem
 
 /// A dependency SwiftPM considers managed: checked out, or used from a local path.
 public struct ManagedDependency: Sendable, Hashable {
     public enum State: Sendable, Hashable {
         case sourceControlCheckout(PinState)
         case fileSystem(path: String)
+        /// Extracted under `.build/registry/downloads/<subpath>`.
+        case registryDownload(Version)
     }
 
     public let package: PackageReference
@@ -340,12 +343,21 @@ public struct WorkspaceState: Sendable {
         let checkoutState: StoredCheckout?
         let name: String
         let path: String?
+        let version: String?
+
+        init(checkoutState: StoredCheckout?, name: String, path: String?, version: String? = nil) {
+            self.checkoutState = checkoutState
+            self.name = name
+            self.path = path
+            self.version = version
+        }
     }
 
     private enum StateName {
         static let sourceControlCheckout = "sourceControlCheckout"
         static let fileSystem = "fileSystem"
         static let edited = "edited"
+        static let registryDownload = "registryDownload"
     }
 
     private struct StoredDependency: Codable {
@@ -376,10 +388,15 @@ public struct WorkspaceState: Sendable {
                     checkout = StoredCheckout(branch: branch, revision: revision, version: nil)
                 case .revision(let revision):
                     checkout = StoredCheckout(branch: nil, revision: revision, version: nil)
+                case .registryVersion(let version):
+                    // Not a checkout; registry packages use `.registryDownload`.
+                    checkout = StoredCheckout(branch: nil, revision: "", version: version.description)
                 }
                 self.state = StoredDependencyState(checkoutState: checkout, name: StateName.sourceControlCheckout, path: nil)
             case .fileSystem(let path):
                 self.state = StoredDependencyState(checkoutState: nil, name: StateName.fileSystem, path: path)
+            case .registryDownload(let version):
+                self.state = StoredDependencyState(checkoutState: nil, name: StateName.registryDownload, path: nil, version: version.description)
             }
         }
 
@@ -406,6 +423,8 @@ public struct WorkspaceState: Sendable {
                 kind = .remoteSourceControl(url: self.packageRef.location)
             case PackageKind.localSourceControl(path: "").serializedName:
                 kind = .localSourceControl(path: self.packageRef.location)
+            case PackageKind.registry(identity: "").serializedName:
+                kind = .registry(identity: self.packageRef.identity)
             case PackageKind.fileSystem(path: "").serializedName:
                 kind = .fileSystem(path: self.packageRef.location)
             default:
@@ -427,6 +446,9 @@ public struct WorkspaceState: Sendable {
                 return ManagedDependency(package: package, state: .sourceControlCheckout(pin), subpath: self.subpath, name: self.packageRef.name)
             case StateName.fileSystem:
                 return ManagedDependency(package: package, state: .fileSystem(path: self.state.path ?? ""), subpath: self.subpath, name: self.packageRef.name)
+            case StateName.registryDownload:
+                guard let version = self.state.version.flatMap({ Version($0) }) else { return nil }
+                return ManagedDependency(package: package, state: .registryDownload(version), subpath: self.subpath, name: self.packageRef.name)
             default:
                 return nil
             }
@@ -485,51 +507,6 @@ extension ManagedArtifact.Source: Encodable {
         case .local(let checksum):
             try container.encode(SourceType.local, forKey: .type)
             try container.encodeIfPresent(checksum, forKey: .checksum)
-        }
-    }
-}
-
-/// An opaque JSON value, for round-tripping fields `swx` does not interpret.
-enum JSONValue: Codable, Sendable, Hashable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([JSONValue])
-    case object([String: JSONValue])
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
-        } else if let value = try? container.decode(Double.self) {
-            self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-        } else {
-            self = .object(try container.decode([String: JSONValue].self))
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .null:
-            try container.encodeNil()
-        case .bool(let value):
-            try container.encode(value)
-        case .number(let value):
-            try container.encode(value)
-        case .string(let value):
-            try container.encode(value)
-        case .array(let value):
-            try container.encode(value)
-        case .object(let value):
-            try container.encode(value)
         }
     }
 }

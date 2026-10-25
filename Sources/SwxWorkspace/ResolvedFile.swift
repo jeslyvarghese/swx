@@ -1,22 +1,28 @@
 import Foundation
 import SwxCore
+import SwxSystem
 
 /// What a pin records about its package's checkout.
 public enum PinState: Sendable, Hashable, CustomStringConvertible {
     case version(Version, revision: String)
     case branch(String, revision: String)
     case revision(String)
+    /// A registry release: just a version, no commit.
+    case registryVersion(Version)
 
-    public var revision: String {
+    /// The commit of a source-control pin.
+    public var revision: String? {
         switch self {
         case .version(_, let revision), .branch(_, let revision), .revision(let revision):
             return revision
+        case .registryVersion:
+            return nil
         }
     }
 
     public var description: String {
         switch self {
-        case .version(let version, _):
+        case .version(let version, _), .registryVersion(let version):
             return version.description
         case .branch(let name, _):
             return name
@@ -138,10 +144,17 @@ public struct ResolvedFile: Sendable, Hashable {
         let location: String
         let state: StoredState
 
+        /// SwiftPM leaves the location of registry pins empty: the identity says it all.
+        private static let registryLocation = ""
+
         init(_ pin: Pin) {
             self.identity = pin.package.identity.description
             self.kind = pin.package.kind.serializedName
-            self.location = pin.package.kind.location
+            if case .registry = pin.package.kind {
+                self.location = Self.registryLocation
+            } else {
+                self.location = pin.package.kind.location
+            }
             self.state = StoredState(pin.state)
         }
 
@@ -154,6 +167,8 @@ public struct ResolvedFile: Sendable, Hashable {
                 kind = .localSourceControl(path: self.location)
             case PackageKind.fileSystem(path: "").serializedName:
                 kind = .fileSystem(path: self.location)
+            case PackageKind.registry(identity: "").serializedName:
+                kind = .registry(identity: self.identity)
             default:
                 throw WorkspaceError(description: "unsupported pin kind '\(self.kind)' for \(self.identity)")
             }
@@ -164,7 +179,8 @@ public struct ResolvedFile: Sendable, Hashable {
 
     private struct StoredState: Codable {
         let branch: String?
-        let revision: String
+        /// Absent for registry pins.
+        let revision: String?
         let version: String?
 
         init(_ state: PinState) {
@@ -181,6 +197,10 @@ public struct ResolvedFile: Sendable, Hashable {
                 self.version = nil
                 self.branch = nil
                 self.revision = revision
+            case .registryVersion(let version):
+                self.version = version.description
+                self.branch = nil
+                self.revision = nil
             }
         }
 
@@ -189,12 +209,16 @@ public struct ResolvedFile: Sendable, Hashable {
                 guard let parsed = Version(version) else {
                     throw WorkspaceError(description: "invalid version '\(version)' in Package.resolved")
                 }
-                return .version(parsed, revision: self.revision)
+                guard let revision = self.revision else { return .registryVersion(parsed) }
+                return .version(parsed, revision: revision)
+            }
+            guard let revision = self.revision else {
+                throw WorkspaceError(description: "a pin in Package.resolved has neither a version nor a revision")
             }
             if let branch {
-                return .branch(branch, revision: self.revision)
+                return .branch(branch, revision: revision)
             }
-            return .revision(self.revision)
+            return .revision(revision)
         }
     }
 
@@ -218,13 +242,6 @@ public struct ResolvedFile: Sendable, Hashable {
 }
 
 /// SwiftPM's `JSONEncoder.makeWithDefaults()`.
-enum JSONCoding {
-    static var encoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
-        return encoder
-    }
-}
 
 public struct WorkspaceError: Error, CustomStringConvertible {
     public let description: String

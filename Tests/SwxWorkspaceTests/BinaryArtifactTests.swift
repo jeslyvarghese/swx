@@ -115,9 +115,9 @@ struct ArchiveLayoutTests {
 
         // Links inside the archive are fine (framework `Versions/Current`).
         try FileManager.default.createSymbolicLink(atPath: root.path + "/Kit.xcframework/Current", withDestinationPath: "Info.plist")
-        try BinaryArtifactSource.validateNoEscapingSymlinks(in: root)
+        try ArchiveExtraction.validateNoEscapingSymlinks(in: root)
 
         try FileManager.default.createSymbolicLink(atPath: root.path + "/Kit.xcframework/escape", withDestinationPath: "../../outside")
-        #expect(throws: SourceError.self) { try BinaryArtifactSource.validateNoEscapingSymlinks(in: root) }
+        #expect(throws: SourceError.self) { try ArchiveExtraction.validateNoEscapingSymlinks(in: root) }
     }
 }

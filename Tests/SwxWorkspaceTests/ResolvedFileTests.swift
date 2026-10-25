@@ -66,6 +66,94 @@ private let swiftPMWorkspaceState = """
 }
 """
 
+/// SwiftPM 6.4's lockfile for an app on a registry (`mona.Graph` → `mona.LinkedList`) plus git.
+private let swiftPMRegistryResolvedFile = """
+{
+  "pins" : [
+    {
+      "identity" : "mona.Graph",
+      "kind" : "registry",
+      "location" : "",
+      "state" : {
+        "version" : "1.0.0"
+      }
+    },
+    {
+      "identity" : "mona.LinkedList",
+      "kind" : "registry",
+      "location" : "",
+      "state" : {
+        "version" : "1.1.0"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    }
+  ],
+  "version" : 2
+}
+
+"""
+
+/// The matching workspace state entry for a registry download.
+private let swiftPMRegistryWorkspaceState = """
+{
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "mona.Graph",
+          "kind" : "registry",
+          "location" : "mona.Graph",
+          "name" : "mona.Graph"
+        },
+        "state" : {
+          "name" : "registryDownload",
+          "version" : "1.0.0"
+        },
+        "subpath" : "mona/Graph/1.0.0"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}
+"""
+
+struct RegistryPinTests {
+    @Test func roundTripsRegistryPinsByteForByte() throws {
+        let original = Data(swiftPMRegistryResolvedFile.utf8)
+        let decoded = try ResolvedFile.decode(original)
+
+        let graph = try #require(decoded.pins[PackageIdentity(plain: "mona.graph")])
+        #expect(graph.state == .registryVersion(Version(1, 0, 0)))
+        #expect(graph.package.kind == .registry(identity: "mona.Graph"))
+        #expect(try decoded.encode(format: .v2) == original)
+    }
+
+    @Test func roundTripsRegistryDownloadsByteForByte() throws {
+        let original = Data(swiftPMRegistryWorkspaceState.utf8)
+        let decoded = try #require(WorkspaceState.decodeIfCompatible(original))
+
+        let graph = try #require(decoded.dependencies[PackageIdentity(plain: "mona.Graph")])
+        #expect(graph.state == .registryDownload(Version(1, 0, 0)))
+        #expect(graph.subpath == "mona/Graph/1.0.0")
+        #expect(try decoded.encode() == original)
+    }
+}
+
 struct ResolvedFileTests {
     @Test func roundTripsSwiftPMOutputByteForByte() throws {
         let original = Data(swiftPMResolvedFile.utf8)

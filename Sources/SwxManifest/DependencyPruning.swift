@@ -145,8 +145,7 @@ extension Manifest {
 extension Manifest.Dependency {
     /// The package reference and requirement the resolver works with.
     ///
-    /// Returns `nil` for registry dependencies, which are not supported yet.
-    public var declaration: DependencyDeclaration? {
+    public var declaration: DependencyDeclaration {
         let reference: PackageReference
         switch self.location {
         case .remote(let url):
@@ -155,8 +154,8 @@ extension Manifest.Dependency {
             reference = PackageReference(identity: PackageIdentity(plain: self.identity), kind: .localSourceControl(path: path))
         case .local(let path):
             reference = PackageReference(identity: PackageIdentity(plain: self.identity), kind: .fileSystem(path: path))
-        case .registry:
-            return nil
+        case .registry(let identity):
+            reference = PackageReference(identity: PackageIdentity(plain: identity), kind: .registry(identity: identity))
         }
         return DependencyDeclaration(package: reference, requirement: self.resolverRequirement)
     }

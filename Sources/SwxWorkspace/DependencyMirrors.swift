@@ -24,9 +24,9 @@ struct DependencyMirrors: Sendable {
         self.originals = Dictionary(mirrors.map { ($0.value, $0.key) }, uniquingKeysWith: { min($0, $1) })
     }
 
-    /// Shared (`~/.swiftpm`) mirrors overlaid by the package's own (`.swiftpm`).
-    static func load(for packageDirectory: URL) -> DependencyMirrors {
-        let shared = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(Path.configuration).appendingPathComponent(Path.file)
+    /// Shared (`~/.swiftpm/configuration`) mirrors overlaid by the package's own (`.swiftpm`).
+    static func load(for packageDirectory: URL, sharedDirectory: URL) -> DependencyMirrors {
+        let shared = sharedDirectory.appendingPathComponent(Path.file)
         let local = packageDirectory.appendingPathComponent(Path.configuration).appendingPathComponent(Path.file)
         let merged = Self.read(shared).merging(Self.read(local)) { $1 }
         return DependencyMirrors(mirrors: merged)

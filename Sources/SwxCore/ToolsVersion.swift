@@ -92,6 +92,9 @@ public enum WellKnownFile {
     public static let buildDirectory = ".build"
     public static let checkoutsDirectory = "checkouts"
     public static let artifactsDirectory = "artifacts"
+    public static let registryDownloadsDirectory = "registry/downloads"
+    /// Written by SwiftPM next to each registry download.
+    public static let registryMetadata = ".registry-metadata"
     public static let workspaceState = "workspace-state.json"
 }
 

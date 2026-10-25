@@ -8,6 +8,24 @@ public struct HTTPError: Error, CustomStringConvertible {
     public let description: String
 }
 
+/// A response whose status the caller interprets (registries answer 404 for unknown packages).
+public struct HTTPResponse: Sendable {
+    public let status: Int
+    public let body: Data
+    private let headers: [String: String]
+
+    init(status: Int, body: Data, headers: [String: String]) {
+        self.status = status
+        self.body = body
+        self.headers = Dictionary(headers.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Header lookup is case-insensitive, as HTTP's is.
+    public func header(_ name: String) -> String? {
+        self.headers[name.lowercased()]
+    }
+}
+
 /// HTTP downloads through URLSession, so no `curl` executable is needed
 /// (the official Swift Linux images don't ship one; SwiftPM uses libcurl the same way).
 public enum HTTP {
@@ -35,6 +53,28 @@ public enum HTTP {
             try FileSystem.createDirectory(destination.deletingLastPathComponent())
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: temporary, to: destination)
+        }
+    }
+
+    /// A GET whose status is returned rather than checked; retries only server and network errors.
+    public static func get(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (data, response) = try await Self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            var fields: [String: String] = [:]
+            for case (let name as String, let value as String) in http.allHeaderFields {
+                fields[name] = value
+            }
+            return HTTPResponse(status: http.statusCode, body: data, headers: fields)
         }
     }
 

@@ -31,7 +31,8 @@ struct XcodeOptions: ParsableArguments {
             root: .xcodeProject(projectURL, sourcePackages: sourcePackages),
             cacheDirectory: self.global.cachePath.map { URL(fileURLWithPath: $0) },
             maximumConcurrency: self.global.jobs ?? ResolverDefaults.concurrency,
-            verbosity: self.global.verbosity
+            verbosity: self.global.verbosity,
+            swiftPM: self.global.swiftPMSettings
         ))
         return (workspace, sourcePackages)
     }

@@ -1,8 +1,13 @@
-/// A package's identity: the lowercased last path component of its location, minus `.git`.
+/// A package's identity: the lowercased last path component of its location, minus `.git`,
+/// or a registry identity (`scope.name`).
 ///
 /// Matches SwiftPM's `PackageIdentity(urlString:)` / `computeDefaultName(fromLocation:)`.
+/// Like SwiftPM, identities compare case-insensitively but keep their spelling, so a registry
+/// identity is written as declared (`mona.LinkedList`).
 public struct PackageIdentity: Sendable, Hashable, Comparable, CustomStringConvertible {
     public let description: String
+    /// The case-folded form equality and hashing use.
+    private let key: String
 
     private static let pathSeparator: Character = "/"
     private static let gitSuffix = ".git"
@@ -10,11 +15,31 @@ public struct PackageIdentity: Sendable, Hashable, Comparable, CustomStringConve
     /// Wraps an already-computed identity string, unmodified.
     public init(plain value: String) {
         self.description = value
+        self.key = value.lowercased()
     }
 
     /// Computes the identity for a URL or file path.
     public init(location: String) {
-        self.description = Self.defaultName(fromLocation: location).lowercased()
+        self.init(plain: Self.defaultName(fromLocation: location).lowercased())
+    }
+
+    public static func == (lhs: PackageIdentity, rhs: PackageIdentity) -> Bool {
+        lhs.key == rhs.key
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(self.key)
+    }
+
+    private static let registrySeparator: Character = "."
+
+    /// `scope` and `name` of a registry identity (`mona.LinkedList`).
+    public var registryComponents: (scope: String, name: String)? {
+        guard let separator = self.description.firstIndex(of: Self.registrySeparator) else { return nil }
+        let scope = String(self.description[..<separator])
+        let name = String(self.description[self.description.index(after: separator)...])
+        guard !scope.isEmpty, !name.isEmpty else { return nil }
+        return (scope, name)
     }
 
     /// The case-preserving default name SwiftPM uses for checkouts and `packageRef.name`.
@@ -49,6 +74,8 @@ public enum PackageKind: Sendable, Hashable {
     /// A git repository on disk (`.package(url: "file:///…")` or an absolute path).
     case localSourceControl(path: String)
     case remoteSourceControl(url: String)
+    /// A package from a registry (SE-0292), named by its `scope.name` identity.
+    case registry(identity: String)
 
     private static let fileScheme = "file://"
     private static let absolutePathPrefix = "/"
@@ -74,7 +101,7 @@ public enum PackageKind: Sendable, Hashable {
             return url
         case .localSourceControl(let path):
             return path
-        case .root, .fileSystem:
+        case .root, .fileSystem, .registry:
             return nil
         }
     }
@@ -90,6 +117,8 @@ public enum PackageKind: Sendable, Hashable {
             return "localSourceControl"
         case .remoteSourceControl:
             return "remoteSourceControl"
+        case .registry:
+            return "registry"
         }
     }
 
@@ -99,6 +128,8 @@ public enum PackageKind: Sendable, Hashable {
             return path
         case .remoteSourceControl(let url):
             return url
+        case .registry(let identity):
+            return identity
         }
     }
 }

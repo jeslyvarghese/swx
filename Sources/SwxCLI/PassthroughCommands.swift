@@ -8,6 +8,11 @@ enum Passthrough {
     private static let swift = "swift"
     private static let disableResolution = "--disable-automatic-resolution"
     private static let packagePathOption = "--package-path"
+    private static let configPathOption = "--config-path"
+    private static let securityPathOption = "--security-path"
+    private static let netrcFileOption = "--netrc-file"
+    private static let netrcFlag = "--netrc"
+    private static let disableKeychainFlag = "--disable-keychain"
     private static let assignment = "="
     private static let compilingCommands: Set<[String]> = [["build"], ["test"], ["run"]]
 
@@ -26,7 +31,7 @@ enum Passthrough {
         }
 
         if resolution == .resolveFirst {
-            try await Self.resolve(packagePath: Self.packagePath(in: arguments))
+            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments))
         }
 
         // SwiftPM accepts `--disable-automatic-resolution` on every command that may resolve.
@@ -44,23 +49,46 @@ enum Passthrough {
 
     /// Honours `--package-path` among the passed-through arguments.
     static func packagePath(in arguments: [String]) -> String {
-        for (index, argument) in arguments.enumerated() {
-            if argument == Self.packagePathOption, index + 1 < arguments.count {
-                return arguments[index + 1]
-            }
-            if argument.hasPrefix(Self.packagePathOption + Self.assignment) {
-                return String(argument.dropFirst(Self.packagePathOption.count + Self.assignment.count))
-            }
-        }
-        return "."
+        Self.value(of: Self.packagePathOption, in: arguments) ?? "."
     }
 
-    private static func resolve(packagePath: String) async throws {
+    /// SwiftPM's shared locations and credential flags, read from the passed-through arguments.
+    static func swiftPMSettings(in arguments: [String]) -> SwiftPMSettings {
+        SwiftPMSettings(
+            configurationDirectory: Self.value(of: Self.configPathOption, in: arguments).map(FileSystemPaths.absolute),
+            securityDirectory: Self.value(of: Self.securityPathOption, in: arguments).map(FileSystemPaths.absolute),
+            netrcFile: Self.value(of: Self.netrcFileOption, in: arguments).map(FileSystemPaths.absolute),
+            credentialStore: Self.credentialStore(in: arguments)
+        )
+    }
+
+    private static func credentialStore(in arguments: [String]) -> SwiftPMSettings.CredentialStore {
+        if arguments.contains(Self.netrcFlag) {
+            return .netrc
+        }
+        return arguments.contains(Self.disableKeychainFlag) ? .keychainDisabled : .platformDefault
+    }
+
+    /// `--name value` or `--name=value`.
+    private static func value(of option: String, in arguments: [String]) -> String? {
+        for (index, argument) in arguments.enumerated() {
+            if argument == option, index + 1 < arguments.count {
+                return arguments[index + 1]
+            }
+            if argument.hasPrefix(option + Self.assignment) {
+                return String(argument.dropFirst(option.count + Self.assignment.count))
+            }
+        }
+        return nil
+    }
+
+    private static func resolve(packagePath: String, settings: SwiftPMSettings) async throws {
         let workspace = Workspace(options: WorkspaceOptions(
             root: .package(FileSystemPaths.absolute(packagePath)),
             cacheDirectory: nil,
             maximumConcurrency: ResolverDefaults.concurrency,
-            verbosity: .normal
+            verbosity: .normal,
+            swiftPM: settings
         ))
         do {
             let report = try await workspace.resolve(mode: .respectPins)

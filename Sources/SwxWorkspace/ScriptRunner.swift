@@ -66,7 +66,13 @@ public struct ScriptRunner: Sendable {
         // Resolve once without target dependencies to learn which products provide the imports.
         try self.writeManifest(in: package, dependencies: dependencies, products: [])
         if !dependencies.isEmpty {
-            let workspace = Workspace(options: WorkspaceOptions(root: .package(package), cacheDirectory: self.options.cacheDirectory, maximumConcurrency: self.options.maximumConcurrency, verbosity: self.options.verbosity))
+            let workspace = Workspace(options: WorkspaceOptions(
+                root: .package(package),
+                cacheDirectory: self.options.cacheDirectory,
+                maximumConcurrency: self.options.maximumConcurrency,
+                verbosity: self.options.verbosity,
+                swiftPM: self.options.swiftPM
+            ))
             let report = try await workspace.resolve(mode: .respectPins)
             let products = try await self.products(for: Self.imports(in: source), pins: report.pins, package: package)
             try self.writeManifest(in: package, dependencies: dependencies, products: products)

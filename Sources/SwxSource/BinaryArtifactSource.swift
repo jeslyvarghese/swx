@@ -41,13 +41,6 @@ public actor BinaryArtifactSource {
 
     private static let extractDirectory = "extract"
 
-    /// SwiftPM extracts with `unzip` too, so archives behave the same.
-    private enum Unzip {
-        static let executable = "unzip"
-        static let quiet = "-q"
-        static let destination = "-d"
-    }
-
     public init(store: Store, maximumConcurrency: Int) {
         self.store = store
         self.limiter = ConcurrencyLimiter(limit: maximumConcurrency)
@@ -97,9 +90,7 @@ public actor BinaryArtifactSource {
 
         // Extract, refuse links that point outside the archive, then drop a wrapper directory.
         let extracted = staging.appendingPathComponent(Self.extractDirectory, isDirectory: true)
-        try FileSystem.createDirectory(extracted)
-        try await ProcessRunner.run([Unzip.executable, Unzip.quiet, archive.path, Unzip.destination, extracted.path])
-        try Self.validateNoEscapingSymlinks(in: extracted)
+        try await ArchiveExtraction.unzip(archive, into: extracted)
         let root = Self.strippingWrapperDirectory(extracted)
 
         // Freeze and publish.
@@ -175,25 +166,6 @@ public actor BinaryArtifactSource {
         let types = artifacts.values.compactMap { $0[MetadataKey.type] as? String }
         guard types.count == artifacts.count, Set(types).count <= 1 else { return nil }
         return .artifactsArchive(types: types)
-    }
-
-    // MARK: Safety
-
-    /// An archive must not plant links that reach outside itself.
-    static func validateNoEscapingSymlinks(in root: URL) throws {
-        let rootPath = root.path
-        guard let enumerator = FileManager.default.enumerator(atPath: rootPath) else { return }
-
-        for case let relative as String in enumerator {
-            let path = rootPath + "/" + relative
-            guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { continue }
-
-            let parent = (path as NSString).deletingLastPathComponent
-            let resolved = FileSystem.normalize(target, relativeTo: parent)
-            guard !target.hasPrefix("/"), resolved.hasPrefix(rootPath + "/") else {
-                throw SourceError(description: "archive contains a link that escapes it: \(relative) -> \(target)")
-            }
-        }
     }
 
     // MARK: Helpers

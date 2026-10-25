@@ -56,18 +56,78 @@ public enum WorkspaceRoot: Sendable {
     case packageForXcode(URL, sourcePackages: URL)
 }
 
+/// SwiftPM's shared locations and credential settings (`--config-path`, `--security-path`, …),
+/// so swx reads the same registries and mirrors and records the same fingerprints.
+public struct SwiftPMSettings: Sendable {
+    private enum Path {
+        static let dotSwiftPM = ".swiftpm"
+        static let configuration = "configuration"
+        static let security = "security"
+    }
+
+    /// `~/.swiftpm/configuration`: shared `registries.json` and `mirrors.json`.
+    public var configurationDirectory: URL
+    /// `~/.swiftpm/security`: fingerprints.
+    public var securityDirectory: URL
+    /// `--netrc-file`; `nil` means `~/.netrc`.
+    public var netrcFile: URL?
+    public var credentialStore: CredentialStore
+
+    /// Which store registry credentials come from (SwiftPM 6.4 consults exactly one).
+    public enum CredentialStore: Sendable {
+        /// The Keychain on macOS, the netrc file elsewhere.
+        case platformDefault
+        /// `--netrc`: the netrc file, even on macOS.
+        case netrc
+        /// `--disable-keychain`: on macOS, no stored credentials at all.
+        case keychainDisabled
+    }
+
+    public init(
+        configurationDirectory: URL? = nil,
+        securityDirectory: URL? = nil,
+        netrcFile: URL? = nil,
+        credentialStore: CredentialStore = .platformDefault
+    ) {
+        let dotSwiftPM = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(Path.dotSwiftPM, isDirectory: true)
+        self.configurationDirectory = configurationDirectory ?? dotSwiftPM.appendingPathComponent(Path.configuration, isDirectory: true)
+        self.securityDirectory = securityDirectory ?? dotSwiftPM.appendingPathComponent(Path.security, isDirectory: true)
+        self.netrcFile = netrcFile
+        self.credentialStore = credentialStore
+    }
+
+    var credentials: CredentialSources {
+        #if os(macOS)
+        let store: CredentialSources.Store
+        switch self.credentialStore {
+        case .platformDefault:
+            store = .keychain
+        case .netrc:
+            store = .netrc
+        case .keychainDisabled:
+            store = .none
+        }
+        return CredentialSources(netrcFile: self.netrcFile, store: store)
+        #else
+        return CredentialSources(netrcFile: self.netrcFile, store: .netrc)
+        #endif
+    }
+}
+
 public struct WorkspaceOptions: Sendable {
     public var root: WorkspaceRoot
     /// Overrides the shared cache location (otherwise `SWX_CACHE_DIR`, `XDG_CACHE_HOME`, `~/.cache/swx`).
     public var cacheDirectory: URL?
     public var maximumConcurrency: Int
     public var verbosity: Verbosity
+    public var swiftPM: SwiftPMSettings
 
-    public init(root: WorkspaceRoot, cacheDirectory: URL?, maximumConcurrency: Int, verbosity: Verbosity) {
+    public init(root: WorkspaceRoot, cacheDirectory: URL?, maximumConcurrency: Int, verbosity: Verbosity, swiftPM: SwiftPMSettings = SwiftPMSettings()) {
         self.root = root
         self.cacheDirectory = cacheDirectory
         self.maximumConcurrency = maximumConcurrency
         self.verbosity = verbosity
+        self.swiftPM = swiftPM
     }
 }
 
@@ -102,6 +162,20 @@ public struct Workspace: Sendable {
         var artifactsDirectory: URL {
             self.stateDirectory.appendingPathComponent(WellKnownFile.artifactsDirectory, isDirectory: true)
         }
+
+        var registryDownloadsDirectory: URL {
+            self.stateDirectory.appendingPathComponent(WellKnownFile.registryDownloadsDirectory, isDirectory: true)
+        }
+
+        /// Where a managed dependency's files live.
+        func directory(of dependency: ManagedDependency) -> URL {
+            switch dependency.state {
+            case .registryDownload:
+                return self.registryDownloadsDirectory.appendingPathComponent(dependency.subpath, isDirectory: true)
+            case .sourceControlCheckout, .fileSystem:
+                return self.checkoutsDirectory.appendingPathComponent(dependency.subpath, isDirectory: true)
+            }
+        }
     }
 
     /// The root's identity, origin hash, and how to obtain its manifest.
@@ -111,6 +185,7 @@ public struct Workspace: Sendable {
         let layout: Layout
         let source: RootSource
         let mirrors: DependencyMirrors
+        let registries: RegistryConfiguration
 
         /// Where relative locations (like `Packages/`) are anchored.
         var directory: URL {
@@ -136,11 +211,11 @@ public struct Workspace: Sendable {
         switch self.options.root {
         case .package(let directory):
             let buildDirectory = directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
-            return try Self.packageContext(directory, stateDirectory: buildDirectory, pathStyle: .lexical)
+            return try Self.packageContext(directory, stateDirectory: buildDirectory, pathStyle: .lexical, settings: self.options.swiftPM)
 
         case .packageForXcode(let directory, let sourcePackages):
             // Same pins and origin hash as SwiftPM; only the checkout location (and Xcode's path spelling) differ.
-            return try Self.packageContext(directory, stateDirectory: sourcePackages, pathStyle: .symlinksResolved)
+            return try Self.packageContext(directory, stateDirectory: sourcePackages, pathStyle: .symlinksResolved, settings: self.options.swiftPM)
 
         case .xcodeProject(let url, let sourcePackages):
             let project = try await XcodeProjectReader.read(url)
@@ -158,13 +233,17 @@ public struct Workspace: Sendable {
                 originHash: originHash,
                 layout: Layout(resolvedFile: project.resolvedFile, stateDirectory: sourcePackages, pathStyle: .symlinksResolved),
                 source: .xcode(manifest),
-                mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent())
+                mirrors: DependencyMirrors.load(for: url.deletingLastPathComponent(), sharedDirectory: self.options.swiftPM.configurationDirectory),
+                registries: try RegistryConfiguration.load(
+                    packageDirectory: url.deletingLastPathComponent(),
+                    configurationDirectory: self.options.swiftPM.configurationDirectory
+                )
             )
         }
     }
 
     /// SwiftPM: originHash is the SHA-256 of the root manifest's bytes.
-    private static func packageContext(_ directory: URL, stateDirectory: URL, pathStyle: RecordedPathStyle) throws -> RootContext {
+    private static func packageContext(_ directory: URL, stateDirectory: URL, pathStyle: RecordedPathStyle, settings: SwiftPMSettings) throws -> RootContext {
         let manifestURL = directory.appendingPathComponent(WellKnownFile.manifest)
         guard let data = FileSystem.readIfPresent(manifestURL) else {
             throw WorkspaceError(description: "no \(WellKnownFile.manifest) found in \(directory.path)")
@@ -175,7 +254,8 @@ public struct Workspace: Sendable {
             originHash: ContentHash.sha256(data),
             layout: layout,
             source: .package(directory),
-            mirrors: DependencyMirrors.load(for: directory)
+            mirrors: DependencyMirrors.load(for: directory, sharedDirectory: settings.configurationDirectory),
+            registries: try RegistryConfiguration.load(packageDirectory: directory, configurationDirectory: settings.configurationDirectory)
         )
     }
 
@@ -238,6 +318,7 @@ public struct Workspace: Sendable {
                 previous: state,
                 context: MaterializeContext(
                     source: GitSource(store: self.store, maximumConcurrency: concurrency),
+                    registry: self.registrySource(for: root),
                     loader: loader,
                     toolsVersion: toolchain.toolsVersion,
                     mirrors: root.mirrors,
@@ -264,12 +345,32 @@ public struct Workspace: Sendable {
         return try await self.fullResolve(mode: mode, root: root, previousPins: previousPins, previousState: state, catalog: .remote)
     }
 
+    /// The registry client for this root's configuration, recording fingerprints where SwiftPM does.
+    private func registrySource(for root: RootContext) -> RegistrySource {
+        RegistrySource(
+            store: self.store,
+            configuration: root.registries,
+            credentials: RegistryCredentials(sources: self.options.swiftPM.credentials),
+            fingerprints: FingerprintStore(securityDirectory: self.options.swiftPM.securityDirectory),
+            maximumConcurrency: self.options.maximumConcurrency
+        )
+    }
+
+    /// Registry versions carry no commit; the solver only reads the version.
+    private static let registryRevision = ""
+
     /// Version pins keyed by the identity resolution uses (the mirror's, when mirrored).
     private static func pinnedVersions(_ pins: [PackageIdentity: Pin], mirrors: DependencyMirrors) -> [PackageIdentity: TaggedVersion] {
         var result: [PackageIdentity: TaggedVersion] = [:]
         for pin in pins.values {
-            guard case .version(let version, let revision) = pin.state else { continue }
-            result[mirrors.effective(pin.package).identity] = TaggedVersion(version: version, revision: revision)
+            switch pin.state {
+            case .version(let version, let revision):
+                result[mirrors.effective(pin.package).identity] = TaggedVersion(version: version, revision: revision)
+            case .registryVersion(let version):
+                result[pin.package.identity] = TaggedVersion(version: version, revision: Self.registryRevision)
+            case .branch, .revision:
+                continue
+            }
         }
         return result
     }
@@ -291,8 +392,10 @@ public struct Workspace: Sendable {
         if mode == .respectPins {
             preferred = Self.pinnedVersions(previousPins, mirrors: rootContext.mirrors).mapValues(\.version)
         }
+        let registry = self.registrySource(for: rootContext)
         let facts = FactProvider(
             source: source,
+            registry: registry,
             loader: loader,
             toolchain: toolchain,
             preferred: preferred,
@@ -336,6 +439,10 @@ public struct Workspace: Sendable {
         // Turn bindings and overrides into pins.
         var pins: [Pin] = []
         for binding in bindings {
+            if case .registry = binding.package.kind {
+                pins.append(Pin(package: binding.package, state: .registryVersion(binding.version)))
+                continue
+            }
             guard let revision = await facts.revision(of: binding.package.identity, at: binding.version) else {
                 throw WorkspaceError(description: "no revision known for \(binding.package.identity) \(binding.version)")
             }
@@ -351,7 +458,14 @@ public struct Workspace: Sendable {
             root: root,
             rootReference: rootReference,
             previous: previousState,
-            context: MaterializeContext(source: source, loader: loader, toolsVersion: toolchain.toolsVersion, mirrors: rootContext.mirrors, layout: layout)
+            context: MaterializeContext(
+                source: source,
+                registry: registry,
+                loader: loader,
+                toolsVersion: toolchain.toolsVersion,
+                mirrors: rootContext.mirrors,
+                layout: layout
+            )
         )
         // The lockfile records original locations, so it stays valid without the mirrors.
         let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state) }
@@ -506,9 +620,7 @@ public struct Workspace: Sendable {
 
         while !pending.isEmpty {
             let dependency = pending.removeFirst()
-            guard let declaration = dependency.declaration.map(mirrors.effective) else {
-                throw WorkspaceError(description: "registry dependency '\(dependency.identity)' is not supported yet")
-            }
+            let declaration = mirrors.effective(dependency.declaration)
             let identity = declaration.package.identity
             await facts.noteTraits(dependency.traits, for: identity)
             guard result.overridden[identity]?.isEdited != true else { continue }
@@ -575,7 +687,25 @@ public struct Workspace: Sendable {
 
     // MARK: Checkouts
 
-    /// Are all pins already checked out at the right revisions?
+    /// The state entry SwiftPM records for a pin (names come from manifests, filled in later).
+    private static func managedDependency(for pin: Pin, name: String? = nil) -> ManagedDependency {
+        guard case .registryVersion(let version) = pin.state else {
+            return ManagedDependency(package: pin.package, state: .sourceControlCheckout(pin.state), subpath: pin.package.name, name: name)
+        }
+
+        // `.build/registry/downloads/<scope>/<name>/<version>`, named by identity rather than manifest.
+        // (Registry identities always have both parts; the registry client rejects others.)
+        let identity = pin.package.identity
+        guard let (scope, name) = identity.registryComponents else {
+            return ManagedDependency(package: pin.package, state: .registryDownload(version), subpath: identity.description + Self.subpathSeparator + version.description)
+        }
+        let subpath = [scope, name, version.description].joined(separator: Self.subpathSeparator)
+        return ManagedDependency(package: pin.package, state: .registryDownload(version), subpath: subpath)
+    }
+
+    private static let subpathSeparator = "/"
+
+    /// Are all pins already in place (checked out or downloaded) at the right versions?
     private static func checkoutsMatch(pins: [Pin], state: WorkspaceState, layout: Layout) -> Bool {
         let preserved = state.preservedIdentities
         return pins.allSatisfy { pin in
@@ -583,18 +713,18 @@ public struct Workspace: Sendable {
             if preserved.contains(pin.package.identity) {
                 return true
             }
-            guard let managed = state.dependencies[pin.package.identity],
-                  case .sourceControlCheckout(let checkedOut) = managed.state,
-                  checkedOut == pin.state else {
+            let wanted = Self.managedDependency(for: pin)
+            guard let managed = state.dependencies[pin.package.identity], managed.state == wanted.state else {
                 return false
             }
-            return FileSystem.isDirectory(layout.checkoutsDirectory.appendingPathComponent(managed.subpath))
+            return FileSystem.isDirectory(layout.directory(of: managed))
         }
     }
 
     /// What materializing needs from the resolve that preceded it.
     private struct MaterializeContext: Sendable {
         let source: GitSource
+        let registry: RegistrySource
         let loader: ManifestLoader
         let toolsVersion: ToolsVersion
         let mirrors: DependencyMirrors
@@ -607,8 +737,8 @@ public struct Workspace: Sendable {
         case package(PackageIdentity, name: String, PackageArtifacts)
     }
 
-    /// Places every pinned tree into `.build/checkouts`, binary artifacts into `.build/artifacts`,
-    /// and writes workspace state.
+    /// Places every pinned tree into `.build/checkouts` or `.build/registry/downloads`, binary
+    /// artifacts into `.build/artifacts`, and writes workspace state.
     private func materialize(
         pins: [Pin],
         fileSystemDependencies: [ManagedDependency],
@@ -627,18 +757,15 @@ public struct Workspace: Sendable {
             previous: previous
         )
 
-        // Only touch checkouts whose revision changed or whose directory is missing.
+        // Only touch trees whose version changed or whose directory is missing.
         let stale = pins.filter { !Self.checkoutsMatch(pins: [$0], state: previous, layout: layout) }
 
-        // Check out, and meanwhile read each package's manifest (for its name and binary targets)
+        // Place trees, and meanwhile read each package's manifest (for its name and binary targets)
         // and fetch its artifacts, so downloads overlap with checkouts.
         let work = try await withThrowingTaskGroup(of: MaterializeWork.self) { group in
             for pin in stale {
                 group.addTask {
-                    let tree = try await context.source.sourceTree(of: pin.package, revision: pin.state.revision)
-                    let destination = layout.checkoutsDirectory.appendingPathComponent(pin.package.name)
-                    let strategy = try Materializer.materialize(tree, at: destination)
-                    self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
+                    try await self.place(pin, context: context)
                     return .checkout
                 }
             }
@@ -646,14 +773,8 @@ public struct Workspace: Sendable {
             // Edited packages are SwiftPM's.
             for pin in pins where !preserved.contains(pin.package.identity) {
                 group.addTask {
-                    let manifest = try await Self.manifest(
-                        of: pin.package,
-                        at: pin.state.revision,
-                        source: context.source,
-                        loader: context.loader,
-                        toolsVersion: context.toolsVersion
-                    )
-                    let change: PackageChange = previous.dependencies[pin.package.identity]?.state == .sourceControlCheckout(pin.state) ? .unchanged : .updated
+                    let manifest = try await Self.manifest(of: pin, context: context)
+                    let change: PackageChange = previous.dependencies[pin.package.identity]?.state == Self.managedDependency(for: pin).state ? .unchanged : .updated
                     let artifacts = try await installer.install(package: pin.package, manifest: manifest, change: change)
                     return .package(pin.package.identity, name: manifest.name, artifacts)
                 }
@@ -686,30 +807,76 @@ public struct Workspace: Sendable {
             }
         }
 
-        // Remove checkouts of packages that are no longer dependencies.
-        let current = Set(pins.map(\.package.identity))
-        for (identity, managed) in previous.dependencies where !current.contains(identity) {
-            guard case .sourceControlCheckout = managed.state else { continue }
-            try FileSystem.removeTree(layout.checkoutsDirectory.appendingPathComponent(managed.subpath))
-        }
-
-        // Record the new state; SwiftPM names each dependency after its manifest.
+        // Record the new state. SwiftPM names checkouts after their manifest, registry packages by identity.
         var state = previous
         state.dependencies = [:]
         for pin in pins {
-            state.dependencies[pin.package.identity] = ManagedDependency(
-                package: pin.package,
-                state: .sourceControlCheckout(pin.state),
-                subpath: pin.package.name,
-                name: names[pin.package.identity]
-            )
+            state.dependencies[pin.package.identity] = Self.managedDependency(for: pin, name: names[pin.package.identity])
         }
         for dependency in fileSystemDependencies {
             state.dependencies[dependency.package.identity] = dependency
         }
+
+        // Remove trees of packages that are gone or moved to another version.
+        for (identity, managed) in previous.dependencies where state.dependencies[identity]?.subpath != managed.subpath {
+            switch managed.state {
+            case .sourceControlCheckout:
+                try FileSystem.removeTree(layout.directory(of: managed))
+            case .registryDownload:
+                try FileSystem.removeTree(layout.directory(of: managed))
+                Self.removeEmptyParents(of: layout.directory(of: managed), upTo: layout.registryDownloadsDirectory)
+            case .fileSystem:
+                continue
+            }
+        }
+
         try installer.record(artifacts, into: &state)
         try FileSystem.writeAtomically(try state.encode(), to: layout.workspaceState)
         return stale.count
+    }
+
+    /// Puts one pinned tree in place from the store.
+    private func place(_ pin: Pin, context: MaterializeContext) async throws {
+        let managed = Self.managedDependency(for: pin)
+        let destination = context.layout.directory(of: managed)
+
+        switch pin.state {
+        case .registryVersion(let version):
+            let tree = try await context.registry.sourceTree(of: pin.package.identity, version: version)
+            let strategy = try Materializer.materialize(tree, at: destination)
+
+            // SwiftPM keeps the release's provenance next to the sources.
+            let metadata = try await context.registry.releaseMetadataFile(of: pin.package.identity, version: version)
+            try FileSystem.writeAtomically(metadata, to: destination.appendingPathComponent(WellKnownFile.registryMetadata))
+            self.log(.verbose, "downloaded \(pin.package.identity) \(version) (\(strategy))")
+
+        case .version(_, let revision), .branch(_, let revision), .revision(let revision):
+            let tree = try await context.source.sourceTree(of: pin.package, revision: revision)
+            let strategy = try Materializer.materialize(tree, at: destination)
+            self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
+        }
+    }
+
+    /// The manifest of a pinned package, from the registry or from git.
+    private static func manifest(of pin: Pin, context: MaterializeContext) async throws -> Manifest {
+        guard let revision = pin.state.revision else {
+            guard case .registryVersion(let version) = pin.state else {
+                throw WorkspaceError(description: "\(pin.package.identity) has no revision")
+            }
+            let contents = try await context.registry.manifest(of: pin.package.identity, version: version, toolsVersion: context.toolsVersion)
+            return try await context.loader.load(contents: contents)
+        }
+        return try await Self.manifest(of: pin.package, at: revision, source: context.source, loader: context.loader, toolsVersion: context.toolsVersion)
+    }
+
+    /// Drops directories left empty between `directory` and `root` (old `<scope>/<name>`).
+    private static func removeEmptyParents(of directory: URL, upTo root: URL) {
+        var current = directory.deletingLastPathComponent()
+        while current.path.count > root.path.count {
+            guard let contents = try? FileManager.default.contentsOfDirectory(atPath: current.path), contents.isEmpty else { return }
+            try? FileSystem.removeTree(current)
+            current = current.deletingLastPathComponent()
+        }
     }
 
     // MARK: Files

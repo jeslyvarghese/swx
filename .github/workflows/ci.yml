@@ -22,6 +22,8 @@ jobs:
         run: |
           Scripts/compare-pin-reuse.sh .build/release/swx
           Scripts/compare-submodules.sh .build/release/swx
+      - name: Package registries against SwiftPM
+        run: Scripts/compare-registry.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04

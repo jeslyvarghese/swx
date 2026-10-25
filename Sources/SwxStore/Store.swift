@@ -11,6 +11,8 @@ import SwxSystem
 /// manifests/<key>.json   evaluated manifest summaries
 /// revisions/<sha>.json   root manifest files at a commit (commits are immutable)
 /// artifacts/<checksum>/  extracted binary-target archives, keyed by their SHA-256
+/// registry/<checksum>/   extracted registry source archives, keyed by their SHA-256
+/// releases/<key>.json    registry release metadata (released versions never change)
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// cas/                   shared compilation cache, when the toolchain supports it
@@ -24,6 +26,8 @@ public struct Store: Sendable {
         case manifests
         case revisions
         case artifacts
+        case registry
+        case releases
         case tools
         case scripts
         case toolchains
@@ -85,6 +89,17 @@ public struct Store: Sendable {
     /// The extracted contents of a binary-target archive; the checksum pins its bytes forever.
     public func artifactPath(checksum: String) -> URL {
         self.directory(.artifacts).appendingPathComponent(checksum, isDirectory: true)
+    }
+
+    /// The extracted source archive of a registry release.
+    public func registryTreePath(checksum: String) -> URL {
+        self.directory(.registry).appendingPathComponent(checksum, isDirectory: true)
+    }
+
+    /// Cached metadata of one release, keyed by registry, identity and version.
+    public func registryReleasePath(registry: String, identity: String, version: String) -> URL {
+        let key = ContentHash.sha256([registry, identity.lowercased(), version].joined(separator: "\u{0}"))
+        return self.directory(.releases).appendingPathComponent(key).appendingPathExtension(Self.jsonExtension)
     }
 
     /// A tool built from `revision` with one toolchain.

@@ -53,7 +53,7 @@ public struct Toolchain: Sendable, Hashable {
 /// The cache key covers the manifest text and the toolchain, so a hit is always valid:
 /// the cache is memoization of a pure function `(manifest, toolchain) → Manifest`.
 public actor ManifestLoader {
-    private static let cacheFormatVersion = "4"
+    private static let cacheFormatVersion = "5"
     private static let evaluationPrefix = "swx-manifest"
 
     /// `SWX_STATIC_MANIFESTS=0` forces real evaluation for every manifest (for debugging).

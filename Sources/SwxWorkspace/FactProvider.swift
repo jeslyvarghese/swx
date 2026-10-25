@@ -22,6 +22,7 @@ struct PinsNoLongerFit: Error {
 /// early are simply awaited when the solver later requires them.
 actor FactProvider {
     private let source: GitSource
+    private let registry: RegistrySource
     private let loader: ManifestLoader
     private let toolchain: Toolchain
 
@@ -49,6 +50,7 @@ actor FactProvider {
 
     init(
         source: GitSource,
+        registry: RegistrySource,
         loader: ManifestLoader,
         toolchain: Toolchain,
         preferred: [PackageIdentity: Version],
@@ -56,6 +58,7 @@ actor FactProvider {
         catalog: VersionCatalog
     ) {
         self.source = source
+        self.registry = registry
         self.loader = loader
         self.toolchain = toolchain
         self.preferred = preferred
@@ -82,6 +85,11 @@ actor FactProvider {
 
     func versions(of package: PackageReference) async throws -> [TaggedVersion] {
         let tagged = try await self.versionsTask(for: package).value
+
+        // Registry releases have no commit to remember.
+        if case .registry = package.kind {
+            return tagged
+        }
         self.revisions[package.identity] = Dictionary(tagged.map { ($0.version, $0.revision) }, uniquingKeysWith: { first, _ in first })
         return tagged
     }
@@ -104,8 +112,7 @@ actor FactProvider {
     /// Starts tag listing for each dependency, then loads the manifest of its likely version.
     func speculate(on declarations: [DependencyDeclaration]) {
         for declaration in declarations {
-            guard case .version(let requirement) = declaration.requirement,
-                  declaration.package.kind.sourceControlLocation != nil else { continue }
+            guard case .version(let requirement) = declaration.requirement, Self.isVersioned(declaration.package.kind) else { continue }
             let versions = self.versionsTask(for: declaration.package)
 
             Task {
@@ -131,6 +138,19 @@ actor FactProvider {
         _ = self.dependenciesTask(for: package, at: candidate)
     }
 
+    /// Packages whose versions come from tags or a registry (not path dependencies).
+    private static func isVersioned(_ kind: PackageKind) -> Bool {
+        switch kind {
+        case .remoteSourceControl, .localSourceControl, .registry:
+            return true
+        case .root, .fileSystem:
+            return false
+        }
+    }
+
+    /// Registry versions carry no commit; the solver only reads the version.
+    private static let registryRevision = ""
+
     // MARK: Tasks
 
     private func versionsTask(for package: PackageReference) -> Task<[TaggedVersion], Error> {
@@ -140,7 +160,12 @@ actor FactProvider {
         let task: Task<[TaggedVersion], Error>
         switch self.catalog {
         case .remote:
-            task = Task { [source, toolchain] in try await source.versions(of: package, toolsVersion: toolchain.toolsVersion) }
+            task = Task { [source, registry, toolchain] in
+                guard case .registry = package.kind else {
+                    return try await source.versions(of: package, toolsVersion: toolchain.toolsVersion)
+                }
+                return try await registry.versions(of: package.identity).map { TaggedVersion(version: $0, revision: Self.registryRevision) }
+            }
         case .pinned(let pins):
             // An unpinned package means the graph changed: only a real resolve can place it.
             let pinned = pins[package.identity]
@@ -169,24 +194,8 @@ actor FactProvider {
     /// (network, git, a broken manifest) aborts resolution rather than silently picking another version.
     private func loadDependencies(of package: PackageReference, at version: Version) async throws -> DependencyFacts {
         do {
-            // Map the version to its commit.
-            _ = try await self.versions(of: package)
-            guard let revision = self.revisions[package.identity]?[version] else {
-                throw WorkspaceError(description: "no tag for \(package.identity) \(version)")
-            }
-
-            // The version being considered is usually the one chosen: start its checkout now.
-            await self.source.prefetchSourceTree(of: package, revision: revision)
-
             // Pick the manifest SwiftPM would pick, and reject newer tools versions without evaluating.
-            let files = try await self.source.manifestFiles(of: package, at: [revision])[revision]
-            guard let files, let manifestName = ToolsVersion.selectManifest(
-                fileNames: files.rootFileNames,
-                current: self.toolchain.toolsVersion,
-                contentsOf: { files.files[$0] }
-            ), let contents = files.files[manifestName] else {
-                throw WorkspaceError(description: "\(package.identity) has no Package.swift at \(version)")
-            }
+            let contents = try await self.manifestContents(of: package, at: version)
             let declaredToolsVersion = ToolsVersion.parse(manifest: contents)
             guard declaredToolsVersion <= self.toolchain.toolsVersion else {
                 return .unavailable(reason: "requires tools version \(declaredToolsVersion), current is \(self.toolchain.toolsVersion)")
@@ -199,9 +208,7 @@ actor FactProvider {
 
             var declarations: [DependencyDeclaration] = []
             for dependency in required {
-                guard let declaration = dependency.declaration.map(self.mirrors.effective) else {
-                    throw WorkspaceError(description: "\(package.identity) \(version): registry dependency '\(dependency.identity)' is not supported yet")
-                }
+                let declaration = self.mirrors.effective(dependency.declaration)
                 self.noteTraits(dependency.traits, for: declaration.package.identity)
                 declarations.append(declaration)
             }
@@ -216,5 +223,32 @@ actor FactProvider {
         } catch {
             throw WorkspaceError(description: "\(package.identity) \(version): \(error)")
         }
+    }
+
+    /// The selected manifest's text, from the registry or from git at the version's commit.
+    /// Either way the version considered is usually the one chosen, so its download starts now.
+    private func manifestContents(of package: PackageReference, at version: Version) async throws -> String {
+        if case .registry = package.kind {
+            let registry = self.registry
+            Task { _ = try? await registry.sourceTree(of: package.identity, version: version) }
+            return try await registry.manifest(of: package.identity, version: version, toolsVersion: self.toolchain.toolsVersion)
+        }
+
+        // Map the version to its commit.
+        _ = try await self.versions(of: package)
+        guard let revision = self.revisions[package.identity]?[version] else {
+            throw WorkspaceError(description: "no tag for \(package.identity) \(version)")
+        }
+        await self.source.prefetchSourceTree(of: package, revision: revision)
+
+        let files = try await self.source.manifestFiles(of: package, at: [revision])[revision]
+        guard let files, let manifestName = ToolsVersion.selectManifest(
+            fileNames: files.rootFileNames,
+            current: self.toolchain.toolsVersion,
+            contentsOf: { files.files[$0] }
+        ), let contents = files.files[manifestName] else {
+            throw WorkspaceError(description: "\(package.identity) has no Package.swift at \(version)")
+        }
+        return contents
     }
 }

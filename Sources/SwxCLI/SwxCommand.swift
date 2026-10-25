@@ -47,6 +47,38 @@ struct GlobalOptions: ParsableArguments {
     @Flag(name: [.customShort("q"), .customLong("quiet")], help: "Decrease verbosity.")
     var quiet = false
 
+    @Option(name: .customLong("config-path"), help: "SwiftPM's shared configuration directory (registries, mirrors).")
+    var configPath: String?
+
+    @Option(name: .customLong("security-path"), help: "SwiftPM's shared security directory (fingerprints).")
+    var securityPath: String?
+
+    @Option(name: .customLong("netrc-file"), help: "The netrc file with registry credentials (default: ~/.netrc).")
+    var netrcFile: String?
+
+    @Flag(name: .customLong("netrc"), help: "Use the netrc file even where the keychain would be preferred.")
+    var forceNetrc = false
+
+    @Flag(name: .customLong("disable-keychain"), help: "Don't read registry credentials from the macOS keychain.")
+    var disableKeychain = false
+
+    /// The same shared locations and credential sources SwiftPM would use.
+    var swiftPMSettings: SwiftPMSettings {
+        SwiftPMSettings(
+            configurationDirectory: self.configPath.map(FileSystemPaths.absolute),
+            securityDirectory: self.securityPath.map(FileSystemPaths.absolute),
+            netrcFile: self.netrcFile.map(FileSystemPaths.absolute),
+            credentialStore: self.credentialStore
+        )
+    }
+
+    private var credentialStore: SwiftPMSettings.CredentialStore {
+        if self.forceNetrc {
+            return .netrc
+        }
+        return self.disableKeychain ? .keychainDisabled : .platformDefault
+    }
+
     var verbosity: Verbosity {
         if self.quiet {
             return .quiet
@@ -63,7 +95,8 @@ struct GlobalOptions: ParsableArguments {
             root: .package(self.packageURL),
             cacheDirectory: self.cachePath.map { URL(fileURLWithPath: $0) },
             maximumConcurrency: self.jobs ?? ResolverDefaults.concurrency,
-            verbosity: self.verbosity
+            verbosity: self.verbosity,
+            swiftPM: self.swiftPMSettings
         )
     }
 
