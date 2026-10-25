@@ -68,8 +68,8 @@ struct SerializedManifestDecoderTests {
     }
 
     @Test func detectsManifestsNeedingXcode() {
-        #expect(XcodeManifestEvaluator.isNeeded(for: "import PackageDescription\nimport AppleProductTypes\n"))
-        #expect(XcodeManifestEvaluator.isNeeded(for: "@preconcurrency import AppleProductTypes"))
-        #expect(!XcodeManifestEvaluator.isNeeded(for: "import PackageDescription\n// import AppleProductTypes is not needed\n"))
+        #expect(ManifestCompiler.needsXcode("import PackageDescription\nimport AppleProductTypes\n"))
+        #expect(ManifestCompiler.needsXcode("@preconcurrency import AppleProductTypes"))
+        #expect(!ManifestCompiler.needsXcode("import PackageDescription\n// import AppleProductTypes is not needed\n"))
     }
 }

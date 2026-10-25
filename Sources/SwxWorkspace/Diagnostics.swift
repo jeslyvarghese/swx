@@ -23,6 +23,8 @@ public struct ManifestParityReport: Sendable {
 /// Which manifest reader a parity run holds against `dump-package`.
 public enum ManifestReader: Sendable {
     case staticParser
+    /// Compiling against the toolchain's ManifestAPI (how swx evaluates declined manifests).
+    case toolchainManifestAPI
     /// Xcode's ManifestAPI, used for `AppleProductTypes` apps.
     case xcodeManifestAPI
 
@@ -30,8 +32,10 @@ public enum ManifestReader: Sendable {
         switch self {
         case .staticParser:
             return .staticParser
+        case .toolchainManifestAPI:
+            return .compiler(.toolchain)
         case .xcodeManifestAPI:
-            return .xcodeManifestAPI
+            return .compiler(.xcode)
         }
     }
 }

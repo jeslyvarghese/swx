@@ -160,15 +160,23 @@ public actor ManifestLoader {
         return try await Self.dumpPackage(at: directory)
     }
 
-    /// Evaluates a manifest; `AppleProductTypes` apps go through Xcode's ManifestAPI, since the
-    /// command-line SwiftPM can't import that module.
+    /// Evaluates a manifest by compiling it against the toolchain's ManifestAPI (faster than
+    /// starting SwiftPM), falling back to `dump-package`; `AppleProductTypes` apps need Xcode's
+    /// ManifestAPI, since the command-line SwiftPM can't import that module.
     private static func dumpPackage(at directory: URL) async throws -> Manifest {
         let contents = String(decoding: try FileSystem.read(directory.appendingPathComponent(WellKnownFile.manifest)), as: UTF8.self)
-        if XcodeManifestEvaluator.isNeeded(for: contents) {
+        if ManifestCompiler.needsXcode(contents) {
             Trace.event("manifest: Xcode ManifestAPI")
-            return try await XcodeManifestEvaluator.evaluate(contents: contents, packageDirectory: directory)
+            return try await ManifestCompiler.evaluate(contents: contents, packageDirectory: directory, api: .xcode)
         }
-        return try await Self.runDumpPackageDecoding(at: directory)
+        do {
+            let manifest = try await ManifestCompiler.evaluate(contents: contents, packageDirectory: directory, api: .toolchain)
+            Trace.event("manifest: toolchain ManifestAPI")
+            return manifest
+        } catch {
+            Trace.event("manifest: dump-package (\(String(describing: error).prefix(120)))")
+            return try await Self.runDumpPackageDecoding(at: directory)
+        }
     }
 
     /// Evaluation can fail transiently under heavy parallel load (SwiftPM's own cache locks), so try twice.

@@ -18,8 +18,8 @@ public enum ParityOutcome: Sendable {
 public enum ParityCandidate: Sendable {
     /// The static parser (`StaticManifestParser`).
     case staticParser
-    /// Compiling against Xcode's ManifestAPI (`XcodeManifestEvaluator`), as used for app manifests.
-    case xcodeManifestAPI
+    /// Compiling against a ManifestAPI (`ManifestCompiler`): the toolchain's, or Xcode's for apps.
+    case compiler(ManifestAPI)
 }
 
 /// Differential testing of manifest readers against `swift package dump-package`.
@@ -30,13 +30,13 @@ public enum ManifestParity {
         switch candidate {
         case .staticParser:
             return await Self.checkStaticParser(contents, environment: environment)
-        case .xcodeManifestAPI:
-            return await Self.checkXcodeEvaluator(contents)
+        case .compiler(let api):
+            return await Self.checkCompiler(contents, api: api)
         }
     }
 
     /// Both evaluations run in one scratch package, so relative paths resolve identically.
-    private static func checkXcodeEvaluator(_ contents: String) async -> ParityOutcome {
+    private static func checkCompiler(_ contents: String, api: ManifestAPI) async -> ParityOutcome {
         do {
             let directory = try FileSystem.makeTemporaryDirectory(prefix: Self.scratchPrefix)
             defer { try? FileSystem.removeTree(directory) }
@@ -48,10 +48,10 @@ public enum ManifestParity {
             } catch {
                 return .evaluationFailed(String(describing: error))
             }
-            let candidate = try await XcodeManifestEvaluator.evaluate(contents: contents, packageDirectory: directory)
+            let candidate = try await ManifestCompiler.evaluate(contents: contents, packageDirectory: directory, api: api)
             return candidate == evaluated ? .matched : .mismatched(staticResult: candidate, evaluated: evaluated)
         } catch {
-            return .declined(reason: "Xcode evaluation failed: \(String(describing: error).prefix(160))")
+            return .declined(reason: "compiled evaluation failed: \(String(describing: error).prefix(160))")
         }
     }
 

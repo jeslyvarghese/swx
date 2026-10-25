@@ -26,10 +26,11 @@ struct ManifestParityCommand: AsyncParsableCommand {
     /// Which manifest reader to hold against `dump-package`.
     enum Candidate: String, ExpressibleByArgument {
         case `static`
+        case toolchain
         case xcode
     }
 
-    @Option(help: "The reader to compare with dump-package: static (the parser) or xcode (Xcode's ManifestAPI).")
+    @Option(help: "The reader to compare with dump-package: static (the parser), toolchain or xcode (compiled against that ManifestAPI).")
     var candidate: Candidate = .static
 
     func run() async throws {
@@ -55,6 +56,8 @@ struct ManifestParityCommand: AsyncParsableCommand {
         switch self.candidate {
         case .static:
             return .staticParser
+        case .toolchain:
+            return .toolchainManifestAPI
         case .xcode:
             return .xcodeManifestAPI
         }
