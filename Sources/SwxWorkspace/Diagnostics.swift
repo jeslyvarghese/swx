@@ -20,6 +20,22 @@ public struct ManifestParityReport: Sendable {
     }
 }
 
+/// Which manifest reader a parity run holds against `dump-package`.
+public enum ManifestReader: Sendable {
+    case staticParser
+    /// Xcode's ManifestAPI, used for `AppleProductTypes` apps.
+    case xcodeManifestAPI
+
+    var candidate: ParityCandidate {
+        switch self {
+        case .staticParser:
+            return .staticParser
+        case .xcodeManifestAPI:
+            return .xcodeManifestAPI
+        }
+    }
+}
+
 /// Maintenance and verification commands that operate on the shared store.
 public struct Diagnostics: Sendable {
     private let store: Store
@@ -31,7 +47,8 @@ public struct Diagnostics: Sendable {
     }
 
     /// Runs every manifest seen by past resolutions through both the parser and `dump-package`.
-    public func manifestParity(limit: Int?) async throws -> ManifestParityReport {
+    public func manifestParity(limit: Int?, reader: ManifestReader = .staticParser) async throws -> ManifestParityReport {
+        let candidate = reader.candidate
         let toolchain = try await Toolchain.detect(store: self.store)
         let source = GitSource(store: self.store, maximumConcurrency: self.maximumConcurrency)
 
@@ -55,7 +72,7 @@ public struct Diagnostics: Sendable {
         let environment = CompilationEnvironment.host(compilerVersion: toolchain.toolsVersion)
         let outcomes = await withTaskGroup(of: (String, ParityOutcome).self) { group in
             for (revision, contents) in corpus {
-                group.addTask { (revision, await limiter.run { await ManifestParity.check(contents, environment: environment) }) }
+                group.addTask { (revision, await limiter.run { await ManifestParity.check(contents, environment: environment, candidate: candidate) }) }
             }
             return await group.reduce(into: [(String, ParityOutcome)]()) { $0.append($1) }
         }

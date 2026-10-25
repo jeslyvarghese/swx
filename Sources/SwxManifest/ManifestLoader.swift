@@ -160,10 +160,22 @@ public actor ManifestLoader {
         return try await Self.dumpPackage(at: directory)
     }
 
+    /// Evaluates a manifest; `AppleProductTypes` apps go through Xcode's ManifestAPI, since the
+    /// command-line SwiftPM can't import that module.
+    private static func dumpPackage(at directory: URL) async throws -> Manifest {
+        let contents = String(decoding: try FileSystem.read(directory.appendingPathComponent(WellKnownFile.manifest)), as: UTF8.self)
+        if XcodeManifestEvaluator.isNeeded(for: contents) {
+            Trace.event("manifest: Xcode ManifestAPI")
+            return try await XcodeManifestEvaluator.evaluate(contents: contents, packageDirectory: directory)
+        }
+        return try await Self.runDumpPackageDecoding(at: directory)
+    }
+
     /// Evaluation can fail transiently under heavy parallel load (SwiftPM's own cache locks), so try twice.
     private static let evaluationAttempts = 2
 
-    private static func dumpPackage(at directory: URL) async throws -> Manifest {
+    /// `swift package dump-package`, decoded (the reference for parity checks).
+    static func runDumpPackageDecoding(at directory: URL) async throws -> Manifest {
         var result = try await Self.runDumpPackage(at: directory)
         for _ in 1..<Self.evaluationAttempts where !result.succeeded {
             Trace.event("dump-package retry: \(result.errorOutput.prefix(200))")

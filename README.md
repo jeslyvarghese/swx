@@ -203,13 +203,15 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 94 unit tests
+swift test                                            # 98 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)
 Scripts/compare-registry.sh                           # registries vs SwiftPM, via Scripts/test-registry.py (open and basic auth)
 Scripts/compare-fingerprints.sh                       # git tag fingerprints vs SwiftPM, and a moved tag refused by both
+Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTypes app vs xcodebuild (macOS with Xcode)
+swx debug manifest-parity --candidate xcode …         # Xcode ManifestAPI evaluation vs dump-package on the corpus
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```
@@ -233,7 +235,7 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
   - PIF and the build-service API are internal and unstable.
   - `xcodebuild` already supports `AppleProductTypes` apps, signing (`-allowProvisioningUpdates`) and every destination.
   - Host builds go through SwiftPM, which also runs swift-build.
-- **`AppleProductTypes` manifests** can only be read by the static parser. The command-line SwiftPM can't import that module, so dynamic app manifests aren't supported.
+- **`AppleProductTypes` manifests** that the static parser declines are compiled against Xcode's ManifestAPI (which ships `AppleProductTypes`), run in SwiftPM's sandbox, and decoded from PackageDescription's own serialization; the command-line SwiftPM can't import that module at all. This needs Xcode. Over the 88-manifest corpus, that path agrees with `dump-package` on every manifest (`swx debug manifest-parity --candidate xcode`).
 - **The shared compilation cache** (`--enable-build-caching --build-cache-path <store>/cas`) turns on automatically only with toolchains whose SwiftPM has those flags. Swift 6.4 and 6.4.1 don't, so on them `swx` relies on SwiftPM's prebuilts and incremental builds.
 - **Manifest evaluation** still shells out to `swift package dump-package`, and only for manifests the static parser declines.
 

@@ -26,6 +26,8 @@ jobs:
         run: Scripts/compare-registry.sh .build/release/swx
       - name: Git tag fingerprints against SwiftPM
         run: Scripts/compare-fingerprints.sh .build/release/swx
+      - name: Dynamic AppleProductTypes manifests against Xcode
+        run: Scripts/compare-apple-manifest.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04
