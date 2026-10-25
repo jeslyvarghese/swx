@@ -35,9 +35,12 @@ public enum PinState: Sendable, Hashable, CustomStringConvertible {
 public struct Pin: Sendable, Hashable {
     public let package: PackageReference
     public let state: PinState
+    /// The git URL a registry pin replaced (`--replace-scm-with-registry`), as SwiftPM records it.
+    public let originalLocation: String?
 
-    public init(package: PackageReference, state: PinState) {
+    public init(package: PackageReference, state: PinState, originalLocation: String? = nil) {
         self.package = package
+        self.originalLocation = originalLocation
         self.state = state
     }
 }
@@ -142,6 +145,7 @@ public struct ResolvedFile: Sendable, Hashable {
         let identity: String
         let kind: String
         let location: String
+        let originalLocation: String?
         let state: StoredState
 
         /// SwiftPM leaves the location of registry pins empty: the identity says it all.
@@ -155,6 +159,7 @@ public struct ResolvedFile: Sendable, Hashable {
             } else {
                 self.location = pin.package.kind.location
             }
+            self.originalLocation = pin.originalLocation
             self.state = StoredState(pin.state)
         }
 
@@ -172,7 +177,11 @@ public struct ResolvedFile: Sendable, Hashable {
             default:
                 throw WorkspaceError(description: "unsupported pin kind '\(self.kind)' for \(self.identity)")
             }
-            return Pin(package: PackageReference(identity: PackageIdentity(plain: self.identity), kind: kind), state: try self.state.pinState())
+            return Pin(
+                package: PackageReference(identity: PackageIdentity(plain: self.identity), kind: kind),
+                state: try self.state.pinState(),
+                originalLocation: self.originalLocation
+            )
         }
 
     }

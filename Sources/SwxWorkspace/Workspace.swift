@@ -121,13 +121,22 @@ public struct WorkspaceOptions: Sendable {
     public var maximumConcurrency: Int
     public var verbosity: Verbosity
     public var swiftPM: SwiftPMSettings
+    public var registryTransformation: RegistryTransformation
 
-    public init(root: WorkspaceRoot, cacheDirectory: URL?, maximumConcurrency: Int, verbosity: Verbosity, swiftPM: SwiftPMSettings = SwiftPMSettings()) {
+    public init(
+        root: WorkspaceRoot,
+        cacheDirectory: URL?,
+        maximumConcurrency: Int,
+        verbosity: Verbosity,
+        swiftPM: SwiftPMSettings = SwiftPMSettings(),
+        registryTransformation: RegistryTransformation = .disabled
+    ) {
         self.root = root
         self.cacheDirectory = cacheDirectory
         self.maximumConcurrency = maximumConcurrency
         self.verbosity = verbosity
         self.swiftPM = swiftPM
+        self.registryTransformation = registryTransformation
     }
 }
 
@@ -318,7 +327,7 @@ public struct Workspace: Sendable {
         // Fast paths: the lockfile is authoritative when it was produced from this exact manifest.
         if mode == .respectPins, let resolvedFile, resolvedFile.originHash == originHash {
             // Pins name original locations; checkouts come from the mirrors.
-            let pins = resolvedFile.pins.values.map { Pin(package: root.mirrors.effective($0.package), state: $0.state) }
+            let pins = resolvedFile.pins.values.map { Pin(package: root.mirrors.effective($0.package), state: $0.state, originalLocation: $0.originalLocation) }
             if Self.checkoutsMatch(pins: pins, state: state, layout: layout) {
                 return ResolveReport(outcome: .upToDate, pins: pins, changes: [], materialized: 0)
             }
@@ -420,11 +429,12 @@ public struct Workspace: Sendable {
             toolchain: toolchain,
             preferred: preferred,
             mirrors: rootContext.mirrors,
-            catalog: catalog
+            catalog: catalog,
+            transformation: self.options.registryTransformation
         )
 
         // Evaluate the root and split its dependencies into versioned ones and overrides.
-        let root = try await self.rootManifest(rootContext, loader: loader)
+        let root = await facts.transform(try await self.rootManifest(rootContext, loader: loader))
         let rootReference = rootContext.reference
         let overrides = try await self.collectOverrides(
             root: root,
@@ -460,7 +470,9 @@ public struct Workspace: Sendable {
         var pins: [Pin] = []
         for binding in bindings {
             if case .registry = binding.package.kind {
-                pins.append(Pin(package: binding.package, state: .registryVersion(binding.version)))
+                // A registry package that replaced a git dependency remembers that URL, as SwiftPM does.
+                let original = await registry.scmURL(forIdentity: binding.package.identity)
+                pins.append(Pin(package: binding.package, state: .registryVersion(binding.version), originalLocation: original))
                 continue
             }
             guard let revision = await facts.revision(of: binding.package.identity, at: binding.version) else {
@@ -488,7 +500,7 @@ public struct Workspace: Sendable {
             )
         )
         // The lockfile records original locations, so it stays valid without the mirrors.
-        let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state) }
+        let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state, originalLocation: $0.originalLocation) }
         let resolved = ResolvedFile(pins: Dictionary(lockedPins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
         try Self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion), to: layout.resolvedFile)
 
@@ -637,7 +649,7 @@ public struct Workspace: Sendable {
         for (identity, edited) in editedDependencies {
             guard let previous = previousPins[identity] else { continue }
             let path = edited.path ?? packageDirectory.appendingPathComponent(Self.editedPackagesDirectory).appendingPathComponent(edited.subpath).path
-            let manifest = try await loader.load(packageAt: URL(fileURLWithPath: path))
+            let manifest = await facts.transform(try await loader.load(packageAt: URL(fileURLWithPath: path)))
             result.overridden[identity] = Override(package: mirrors.effective(previous.package), state: .edited(previousPin: previous))
             pending += manifest.requiredDependencies(role: .dependency)
         }
@@ -674,7 +686,7 @@ public struct Workspace: Sendable {
                 throw WorkspaceError(description: "unsupported requirement for \(identity): \(declaration.requirement)")
             }
             result.overridden[identity] = override
-            pending += manifest.requiredDependencies(role: .dependency)
+            pending += await facts.transform(manifest).requiredDependencies(role: .dependency)
         }
         return result
     }
@@ -721,10 +733,10 @@ public struct Workspace: Sendable {
         // (Registry identities always have both parts; the registry client rejects others.)
         let identity = pin.package.identity
         guard let (scope, name) = identity.registryComponents else {
-            return ManagedDependency(package: pin.package, state: .registryDownload(version), subpath: identity.description + Self.subpathSeparator + version.description)
+            return ManagedDependency(package: pin.package, state: .registryDownload(version, scmURL: pin.originalLocation), subpath: identity.description + Self.subpathSeparator + version.description)
         }
         let subpath = [scope, name, version.description].joined(separator: Self.subpathSeparator)
-        return ManagedDependency(package: pin.package, state: .registryDownload(version), subpath: subpath)
+        return ManagedDependency(package: pin.package, state: .registryDownload(version, scmURL: pin.originalLocation), subpath: subpath)
     }
 
     private static let subpathSeparator = "/"

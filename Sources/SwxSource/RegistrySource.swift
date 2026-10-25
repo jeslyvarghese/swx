@@ -17,6 +17,7 @@ public actor RegistrySource {
     private var releaseTasks: [String: Task<Release, Error>] = [:]
     private var treeTasks: [String: Task<URL, Error>] = [:]
     private var checkedAvailability: Set<URL> = []
+    private var identityLookups: [String: Task<PackageIdentity?, Error>] = [:]
 
     private enum MediaType {
         static let json = "json"
@@ -35,6 +36,8 @@ public actor RegistrySource {
         static let availability = "availability"
         static let zipExtension = ".zip"
         static let swiftVersionQuery = "swift-version"
+        static let identifiers = "identifiers"
+        static let urlQuery = "url"
     }
 
     private enum Status {
@@ -82,6 +85,43 @@ public actor RegistrySource {
             next = LinkHeader.parse(response.header(Header.link)).first { $0.relation == LinkHeader.next }.flatMap { URL(string: $0.target) }
         }
         return versions.sorted()
+    }
+
+    // MARK: Identities
+
+    private struct Identifiers: Decodable {
+        let identifiers: [String]
+    }
+
+    /// The registry identity of a source-control URL, from the default registry's
+    /// `/identifiers` (first in sorted order when several, as SwiftPM picks; `nil` when unmapped).
+    public func registryIdentity(forURL url: String) async throws -> PackageIdentity? {
+        if let running = self.identityLookups[url] {
+            return try await running.value
+        }
+        let task = Task { try await self.lookUpIdentity(url) }
+        self.identityLookups[url] = task
+        return try await task.value
+    }
+
+    /// The git URL whose lookup produced `identity` (SwiftPM's `identityLookupCache.scmURL(for:)`).
+    public func scmURL(forIdentity identity: PackageIdentity) async -> String? {
+        for (url, lookup) in self.identityLookups.sorted(by: { $0.key < $1.key }) {
+            if (try? await lookup.value) == identity {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private func lookUpIdentity(_ scmURL: String) async throws -> PackageIdentity? {
+        guard let registry = self.configuration.defaultRegistry else { return nil }
+        let url = try Self.url(registry, [Endpoint.identifiers], query: [Endpoint.urlQuery: scmURL])
+        let response = try await self.get(url, accepting: MediaType.json, registry: registry)
+        guard response.status != Status.notFound else { return nil }
+        try Self.requireSuccess(response, url: url)
+        let identifiers = try Self.decode(Identifiers.self, from: response, url: url).identifiers
+        return identifiers.sorted().first.map(PackageIdentity.init(plain:))
     }
 
     // MARK: Manifests

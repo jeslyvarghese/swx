@@ -62,6 +62,25 @@ struct GlobalOptions: ParsableArguments {
     @Flag(name: .customLong("disable-keychain"), help: "Don't read registry credentials from the macOS keychain.")
     var disableKeychain = false
 
+    @Flag(name: .customLong("use-registry-identity-for-scm"), help: "Look git dependencies up in the registry and use their registry identity.")
+    var useRegistryIdentityForSCM = false
+
+    @Flag(name: .customLong("replace-scm-with-registry"), help: "Replace versioned git dependencies with their registry packages where the registry knows them.")
+    var replaceSCMWithRegistry = false
+
+    @Flag(name: .customLong("disable-scm-to-registry-transformation"), help: "Use git dependencies as declared (the default).")
+    var disableSCMToRegistryTransformation = false
+
+    var registryTransformation: RegistryTransformation {
+        if self.disableSCMToRegistryTransformation {
+            return .disabled
+        }
+        if self.replaceSCMWithRegistry {
+            return .replaceWithRegistry
+        }
+        return self.useRegistryIdentityForSCM ? .useRegistryIdentity : .disabled
+    }
+
     /// The same shared locations and credential sources SwiftPM would use.
     var swiftPMSettings: SwiftPMSettings {
         SwiftPMSettings(
@@ -96,7 +115,8 @@ struct GlobalOptions: ParsableArguments {
             cacheDirectory: self.cachePath.map { URL(fileURLWithPath: $0) },
             maximumConcurrency: self.jobs ?? ResolverDefaults.concurrency,
             verbosity: self.verbosity,
-            swiftPM: self.swiftPMSettings
+            swiftPM: self.swiftPMSettings,
+            registryTransformation: self.registryTransformation
         )
     }
 

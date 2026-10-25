@@ -194,6 +194,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
   - archives are verified against the release checksum and SwiftPM's trust-on-first-use fingerprints in `--security-path` (default `~/.swiftpm/security`), which `swx` reads and writes in SwiftPM's format
   - credentials as SwiftPM 6.4 finds them: `SWIFTPM_REGISTRY_TOKEN`/`_LOGIN`/`_PASSWORD`, `SWIFTPM_NETRC_DATA`, then the Keychain on macOS (`.netrc` with `--netrc`) or `.netrc` on Linux (`--netrc-file`), sent as basic or bearer auth per `registries.json`
   - releases are immutable, so metadata and manifests are cached in the store and a lockfile restore downloads only the archives
+  - `--use-registry-identity-for-scm` and `--replace-scm-with-registry`: git dependencies the default registry maps (`/identifiers`) are renamed to, or replaced by, their registry packages, with `originalLocation`/`scmUrl` recorded as SwiftPM does
 - **HTTPS git with `.netrc`** works through git itself, which reads `~/.netrc`.
 - **Git tag fingerprints:** like SwiftPM's `checkIntegrity`, the commit behind each checked-out tag is recorded in `<security>/fingerprints/<identity>-<hash>.json` (the same files SwiftPM writes), and a tag that later moves is refused.
 - **swift-syntax prebuilts:** SwiftPM still applies them after `swx` resolves. A macro build took 3.5 s of CPU instead of 55 s.
@@ -243,7 +244,6 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 ## Not yet supported
 
 - **Registry package signatures** (SE-0391) are not validated. Checksums and fingerprints are, and unsigned packages are accepted with SwiftPM's default policy (`warn`).
-- **`--replace-scm-with-registry` / `--use-registry-identity-for-scm`**, which swap git dependencies for registry ones.
 - **Registry packages in Xcode projects** use the same code path but haven't been compared against Xcode.
 - **Multi-root workspaces.**
 

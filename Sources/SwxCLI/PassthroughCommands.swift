@@ -11,6 +11,9 @@ enum Passthrough {
     private static let configPathOption = "--config-path"
     private static let securityPathOption = "--security-path"
     private static let netrcFileOption = "--netrc-file"
+    private static let useRegistryIdentityFlag = "--use-registry-identity-for-scm"
+    private static let replaceWithRegistryFlag = "--replace-scm-with-registry"
+    private static let disableTransformationFlag = "--disable-scm-to-registry-transformation"
     private static let netrcFlag = "--netrc"
     private static let disableKeychainFlag = "--disable-keychain"
     private static let assignment = "="
@@ -31,7 +34,7 @@ enum Passthrough {
         }
 
         if resolution == .resolveFirst {
-            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments))
+            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments), transformation: Self.registryTransformation(in: arguments))
         }
 
         // SwiftPM accepts `--disable-automatic-resolution` on every command that may resolve.
@@ -86,13 +89,25 @@ enum Passthrough {
         return nil
     }
 
-    private static func resolve(packagePath: String, settings: SwiftPMSettings) async throws {
+    /// SwiftPM's source-control-to-registry flags among the passed-through arguments.
+    static func registryTransformation(in arguments: [String]) -> RegistryTransformation {
+        if arguments.contains(Self.disableTransformationFlag) {
+            return .disabled
+        }
+        if arguments.contains(Self.replaceWithRegistryFlag) {
+            return .replaceWithRegistry
+        }
+        return arguments.contains(Self.useRegistryIdentityFlag) ? .useRegistryIdentity : .disabled
+    }
+
+    private static func resolve(packagePath: String, settings: SwiftPMSettings, transformation: RegistryTransformation) async throws {
         let workspace = Workspace(options: WorkspaceOptions(
             root: .package(FileSystemPaths.absolute(packagePath)),
             cacheDirectory: nil,
             maximumConcurrency: ResolverDefaults.concurrency,
             verbosity: .normal,
-            swiftPM: settings
+            swiftPM: settings,
+            registryTransformation: transformation
         ))
         do {
             let report = try await workspace.resolve(mode: .respectPins)

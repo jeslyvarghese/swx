@@ -7,7 +7,9 @@
 # then resolves an app depending on mona.Graph with SwiftPM and with swx, each with its own
 # --config-path / --security-path, and compares Package.resolved, workspace-state.json, the
 # download trees (with .registry-metadata) and the registry fingerprints. Repeats behind
-# HTTP basic auth with credentials from a netrc file.
+# HTTP basic auth with credentials from a netrc file, then the source-control-to-registry
+# transformations (--use-registry-identity-for-scm and --replace-scm-with-registry), with the
+# registry mapping swift-argument-parser's URL to a fixture `apple.swift-argument-parser`.
 #
 #   Scripts/compare-registry.sh [swx-binary]
 set -euo pipefail
@@ -156,3 +158,46 @@ done
 (cd "$work/swx" && "$swx" package resolve $(shared_flags swx) --netrc --netrc-file "$work/netrc" >/dev/null)
 compare
 echo "basic auth via netrc: identical"
+
+# MARK: Source control to registry
+
+# A registry stand-in for swift-argument-parser, and the URL mapping /identifiers answers with.
+mkdir -p "$work/packages/apple/swift-argument-parser/1.5.0/Sources/ArgumentParser"
+cat > "$work/packages/apple/swift-argument-parser/1.5.0/Package.swift" <<'EOF'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(name: "swift-argument-parser", products: [.library(name: "ArgumentParser", targets: ["ArgumentParser"])], targets: [.target(name: "ArgumentParser")])
+EOF
+echo 'public struct ParsableArguments {}' > "$work/packages/apple/swift-argument-parser/1.5.0/Sources/ArgumentParser/ArgumentParser.swift"
+echo '{"https://github.com/apple/swift-argument-parser": "apple.swift-argument-parser"}' > "$work/scm-map.json"
+start_registry --scm-map "$work/scm-map.json"
+
+make_scm_app() {
+    make_app "$1"
+    cat > "$work/$1/Package.swift" <<'EOF'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(
+    name: "App",
+    dependencies: [.package(url: "https://github.com/apple/swift-argument-parser", exact: "1.5.0")],
+    targets: [.executableTarget(name: "App", dependencies: [.product(name: "ArgumentParser", package: "swift-argument-parser")])]
+)
+EOF
+    echo 'import ArgumentParser' > "$work/$1/Sources/App/main.swift"
+}
+
+compare_lockfiles() {
+    diff "$work/spm/Package.resolved" "$work/swx/Package.resolved"
+    diff <(sed "s#$work/spm#R#g" "$work/spm/.build/workspace-state.json") <(sed "s#$work/swx#R#g" "$work/swx/.build/workspace-state.json")
+}
+
+for flag in --use-registry-identity-for-scm --replace-scm-with-registry; do
+    make_scm_app spm
+    make_scm_app swx
+    # shellcheck disable=SC2046
+    (cd "$work/spm" && swift package resolve $(shared_flags spm) "$flag" >/dev/null 2>&1)
+    # shellcheck disable=SC2046
+    (cd "$work/swx" && "$swx" package resolve $(shared_flags swx) "$flag" >/dev/null)
+    compare_lockfiles
+    echo "$flag: Package.resolved and state identical ($(grep -o '"identity" : "[^"]*"' "$work/swx/Package.resolved" | head -1))"
+done

@@ -47,6 +47,7 @@ actor FactProvider {
 
     private let mirrors: DependencyMirrors
     private let catalog: VersionCatalog
+    private let transformer: RegistryTransformer
 
     init(
         source: GitSource,
@@ -55,7 +56,8 @@ actor FactProvider {
         toolchain: Toolchain,
         preferred: [PackageIdentity: Version],
         mirrors: DependencyMirrors,
-        catalog: VersionCatalog
+        catalog: VersionCatalog,
+        transformation: RegistryTransformation
     ) {
         self.source = source
         self.registry = registry
@@ -64,6 +66,12 @@ actor FactProvider {
         self.preferred = preferred
         self.mirrors = mirrors
         self.catalog = catalog
+        self.transformer = RegistryTransformer(mode: transformation, registry: registry)
+    }
+
+    /// Every manifest resolution reads goes through SwiftPM's source-control-to-registry rules.
+    func transform(_ manifest: Manifest) async -> Manifest {
+        await self.transformer.transform(manifest)
     }
 
     /// The tools version manifests are selected and checked against.
@@ -202,7 +210,7 @@ actor FactProvider {
             }
 
             // Evaluate (cached by content) and keep only the dependencies resolution needs.
-            let manifest = try await self.loader.load(contents: contents)
+            let manifest = await self.transform(try await self.loader.load(contents: contents))
             let traits = self.requestedTraits[package.identity] ?? [Manifest.defaultTrait]
             let required = manifest.requiredDependencies(role: .dependency, enabledTraits: traits)
 

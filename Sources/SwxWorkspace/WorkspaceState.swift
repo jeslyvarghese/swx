@@ -8,7 +8,8 @@ public struct ManagedDependency: Sendable, Hashable {
         case sourceControlCheckout(PinState)
         case fileSystem(path: String)
         /// Extracted under `.build/registry/downloads/<subpath>`.
-        case registryDownload(Version)
+        /// `scmURL`: the git URL it replaced, under `--replace-scm-with-registry`.
+        case registryDownload(Version, scmURL: String?)
     }
 
     public let package: PackageReference
@@ -343,12 +344,14 @@ public struct WorkspaceState: Sendable {
         let checkoutState: StoredCheckout?
         let name: String
         let path: String?
+        let scmUrl: String?
         let version: String?
 
-        init(checkoutState: StoredCheckout?, name: String, path: String?, version: String? = nil) {
+        init(checkoutState: StoredCheckout?, name: String, path: String?, version: String? = nil, scmURL: String? = nil) {
             self.checkoutState = checkoutState
             self.name = name
             self.path = path
+            self.scmUrl = scmURL
             self.version = version
         }
     }
@@ -395,8 +398,8 @@ public struct WorkspaceState: Sendable {
                 self.state = StoredDependencyState(checkoutState: checkout, name: StateName.sourceControlCheckout, path: nil)
             case .fileSystem(let path):
                 self.state = StoredDependencyState(checkoutState: nil, name: StateName.fileSystem, path: path)
-            case .registryDownload(let version):
-                self.state = StoredDependencyState(checkoutState: nil, name: StateName.registryDownload, path: nil, version: version.description)
+            case .registryDownload(let version, let scmURL):
+                self.state = StoredDependencyState(checkoutState: nil, name: StateName.registryDownload, path: nil, version: version.description, scmURL: scmURL)
             }
         }
 
@@ -448,7 +451,7 @@ public struct WorkspaceState: Sendable {
                 return ManagedDependency(package: package, state: .fileSystem(path: self.state.path ?? ""), subpath: self.subpath, name: self.packageRef.name)
             case StateName.registryDownload:
                 guard let version = self.state.version.flatMap({ Version($0) }) else { return nil }
-                return ManagedDependency(package: package, state: .registryDownload(version), subpath: self.subpath, name: self.packageRef.name)
+                return ManagedDependency(package: package, state: .registryDownload(version, scmURL: self.state.scmUrl), subpath: self.subpath, name: self.packageRef.name)
             default:
                 return nil
             }
