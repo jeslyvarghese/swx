@@ -55,7 +55,9 @@ cp -R "$work/signed/source/mona.Signed/." "$release/1.0.0/"
 
 python3 -I "$root/Scripts/test-registry.py" --root "$work/packages" > "$work/port" &
 server=$!
-for _ in $(seq 50); do [ -s "$work/port" ] && break; sleep 0.1; done
+# The server prints its port once every archive is built: slow runners need well over 5 s.
+for _ in $(seq 600); do [ -s "$work/port" ] && break; kill -0 "$server" 2>/dev/null || break; sleep 0.1; done
+[ -s "$work/port" ] || { echo "the test registry did not start" >&2; exit 1; }
 readonly port="$(cat "$work/port")"
 
 # MARK: Scenarios

@@ -40,7 +40,9 @@ printf '// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Pa
 echo 'public let kit = 1' > "$release/Sources/RegistryKit/RegistryKit.swift"
 python3 -I "$root/Scripts/test-registry.py" --root "$work/packages" > "$work/port" &
 server=$!
-for _ in $(seq 50); do [ -s "$work/port" ] && break; sleep 0.1; done
+# The server prints its port once every archive is built: slow runners need well over 5 s.
+for _ in $(seq 600); do [ -s "$work/port" ] && break; kill -0 "$server" 2>/dev/null || break; sleep 0.1; done
+[ -s "$work/port" ] || { echo "the test registry did not start" >&2; exit 1; }
 readonly port="$(cat "$work/port")"
 
 # The project: a tool target using a local package that depends on the registry package.

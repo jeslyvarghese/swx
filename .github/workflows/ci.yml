@@ -74,7 +74,7 @@ jobs:
           mkdir -p /work/Sources/App
           cp Tests/Fixtures/sample/Package.swift Tests/Fixtures/sample/greet.swift /work/
           echo 'print("hi")' > /work/Sources/App/main.swift
-          SWX=.build/release/swx Scripts/linux/workflow.sh
+          SWX="$PWD/.build/release/swx" Scripts/linux/workflow.sh
       - name: Git LFS dependencies against SwiftPM
         run: SWX="$PWD/.build/release/swx" Scripts/linux/lfs-check.sh
       - name: Package registries against SwiftPM
