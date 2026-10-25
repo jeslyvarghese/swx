@@ -174,9 +174,14 @@ public enum ManifestCompiler {
     }
 
     /// `swiftc` for the API: Xcode's through `xcrun` with the macOS SDK; the toolchain's from PATH.
+    /// The macOS SDK path, looked up once per process.
+    private static let macOSSDKPath = Task {
+        try await ProcessRunner.run([Tool.xcrun, Tool.sdk, Tool.macOSSDK, Tool.showSDKPath]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func compiler(for api: ManifestAPI) async throws -> [String] {
         #if os(macOS)
-        let sdk = try await ProcessRunner.run([Tool.xcrun, Tool.sdk, Tool.macOSSDK, Tool.showSDKPath]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sdk = try await Self.macOSSDKPath.value
         switch api {
         case .xcode:
             return [Tool.xcrun, Tool.swiftc, "-sdk", sdk]
