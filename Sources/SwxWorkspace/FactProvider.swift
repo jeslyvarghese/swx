@@ -4,6 +4,20 @@ import SwxResolver
 import SwxSource
 import SwxSystem
 
+/// Where the solver learns which versions of a package exist.
+enum VersionCatalog: Sendable {
+    /// Tags listed from each repository.
+    case remote
+    /// Only the pinned versions: SwiftPM's resolution precomputation, which needs no network
+    /// when the pins still satisfy every requirement.
+    case pinned([PackageIdentity: TaggedVersion])
+}
+
+/// The pins alone can't satisfy the requirements (a new package, or a changed requirement).
+struct PinsNoLongerFit: Error {
+    let reason: String
+}
+
 /// Answers solver requests, memoizing each one as a task so that prefetches started
 /// early are simply awaited when the solver later requires them.
 actor FactProvider {
@@ -31,13 +45,22 @@ actor FactProvider {
     }
 
     private let mirrors: DependencyMirrors
+    private let catalog: VersionCatalog
 
-    init(source: GitSource, loader: ManifestLoader, toolchain: Toolchain, preferred: [PackageIdentity: Version], mirrors: DependencyMirrors) {
+    init(
+        source: GitSource,
+        loader: ManifestLoader,
+        toolchain: Toolchain,
+        preferred: [PackageIdentity: Version],
+        mirrors: DependencyMirrors,
+        catalog: VersionCatalog
+    ) {
         self.source = source
         self.loader = loader
         self.toolchain = toolchain
         self.preferred = preferred
         self.mirrors = mirrors
+        self.catalog = catalog
     }
 
     /// The tools version manifests are selected and checked against.
@@ -114,7 +137,18 @@ actor FactProvider {
         if let existing = self.versionTasks[package.identity] {
             return existing
         }
-        let task = Task { [source, toolchain] in try await source.versions(of: package, toolsVersion: toolchain.toolsVersion) }
+        let task: Task<[TaggedVersion], Error>
+        switch self.catalog {
+        case .remote:
+            task = Task { [source, toolchain] in try await source.versions(of: package, toolsVersion: toolchain.toolsVersion) }
+        case .pinned(let pins):
+            // An unpinned package means the graph changed: only a real resolve can place it.
+            let pinned = pins[package.identity]
+            task = Task {
+                guard let pinned else { throw PinsNoLongerFit(reason: "\(package.identity) is not pinned") }
+                return [pinned]
+            }
+        }
         self.versionTasks[package.identity] = task
         return task
     }
@@ -177,6 +211,8 @@ actor FactProvider {
             return .available(declarations)
         } catch let error as WorkspaceError {
             throw error
+        } catch let miss as PinsNoLongerFit {
+            throw miss
         } catch {
             throw WorkspaceError(description: "\(package.identity) \(version): \(error)")
         }

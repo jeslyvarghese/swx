@@ -137,6 +137,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
 - **Lockfile fast paths.**
   - If the `originHash` matches and the checkouts match, `swx` does nothing.
   - If only the checkouts are missing, it restores them without running the solver.
+  - Otherwise (a manifest edit, or a tools-5.9 lockfile without `originHash`), it first solves with only the pinned versions, like SwiftPM's precomputation. Tags are listed only if the pins no longer fit.
 
 ## Architecture
 
@@ -191,6 +192,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ```sh
 swift test                                            # 74 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
+Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```

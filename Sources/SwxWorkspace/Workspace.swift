@@ -247,20 +247,39 @@ public struct Workspace: Sendable {
             return ResolveReport(outcome: .restoredFromPins, pins: pins, changes: [], materialized: materialized)
         }
 
+        let previousPins = resolvedFile?.pins ?? [:]
+
+        // SwiftPM's precomputation: if the pins still satisfy every requirement, the solver needs
+        // nothing but the pins, so no repository has to list its tags.
+        if mode == .respectPins, !previousPins.isEmpty {
+            do {
+                let catalog = VersionCatalog.pinned(Self.pinnedVersions(previousPins, mirrors: root.mirrors))
+                return try await self.fullResolve(mode: mode, root: root, previousPins: previousPins, previousState: state, catalog: catalog)
+            } catch let miss as PinsNoLongerFit {
+                self.log(.verbose, "pins need resolving: \(miss.reason)")
+            }
+        }
+
         // Full resolution.
-        return try await self.fullResolve(
-            mode: mode,
-            root: root,
-            previousPins: resolvedFile?.pins ?? [:],
-            previousState: state
-        )
+        return try await self.fullResolve(mode: mode, root: root, previousPins: previousPins, previousState: state, catalog: .remote)
+    }
+
+    /// Version pins keyed by the identity resolution uses (the mirror's, when mirrored).
+    private static func pinnedVersions(_ pins: [PackageIdentity: Pin], mirrors: DependencyMirrors) -> [PackageIdentity: TaggedVersion] {
+        var result: [PackageIdentity: TaggedVersion] = [:]
+        for pin in pins.values {
+            guard case .version(let version, let revision) = pin.state else { continue }
+            result[mirrors.effective(pin.package).identity] = TaggedVersion(version: version, revision: revision)
+        }
+        return result
     }
 
     private func fullResolve(
         mode: ResolveMode,
         root rootContext: RootContext,
         previousPins: [PackageIdentity: Pin],
-        previousState: WorkspaceState
+        previousState: WorkspaceState,
+        catalog: VersionCatalog
     ) async throws -> ResolveReport {
         let layout = rootContext.layout
         let toolchain = try await Toolchain.detect(store: self.store)
@@ -270,12 +289,16 @@ public struct Workspace: Sendable {
         // Prefer pinned versions unless updating.
         var preferred: [PackageIdentity: Version] = [:]
         if mode == .respectPins {
-            for pin in previousPins.values {
-                guard case .version(let version, _) = pin.state else { continue }
-                preferred[pin.package.identity] = version
-            }
+            preferred = Self.pinnedVersions(previousPins, mirrors: rootContext.mirrors).mapValues(\.version)
         }
-        let facts = FactProvider(source: source, loader: loader, toolchain: toolchain, preferred: preferred, mirrors: rootContext.mirrors)
+        let facts = FactProvider(
+            source: source,
+            loader: loader,
+            toolchain: toolchain,
+            preferred: preferred,
+            mirrors: rootContext.mirrors,
+            catalog: catalog
+        )
 
         // Evaluate the root and split its dependencies into versioned ones and overrides.
         let root = try await self.rootManifest(rootContext, loader: loader)
@@ -301,7 +324,14 @@ public struct Workspace: Sendable {
             preferred: preferred,
             overridden: Set(overrides.overridden.keys)
         )
-        let bindings = try await self.drive(&solver, facts: facts)
+        let bindings: [ResolvedBinding]
+        do {
+            bindings = try await self.drive(&solver, facts: facts)
+        } catch let failure as ResolutionFailure {
+            // With only the pins on offer, a conflict just means the pins no longer fit.
+            guard case .remote = catalog else { throw PinsNoLongerFit(reason: failure.description) }
+            throw WorkspaceError(description: "Dependency resolution failed:\n\(failure.description)")
+        }
 
         // Turn bindings and overrides into pins.
         var pins: [Pin] = []
@@ -354,7 +384,7 @@ public struct Workspace: Sendable {
                 return bindings
 
             case .failed(let failure):
-                throw WorkspaceError(description: "Dependency resolution failed:\n\(failure.description)")
+                throw ResolutionFailure(description: failure.description)
 
             case .needs(let required, let prefetch):
                 // Kick off speculative work first so it overlaps with the required fetches.
@@ -379,6 +409,11 @@ public struct Workspace: Sendable {
                 }
             }
         }
+    }
+
+    /// The solver proved the requirements unsatisfiable with the versions it was offered.
+    private struct ResolutionFailure: Error {
+        let description: String
     }
 
     private enum Answer: Sendable {
