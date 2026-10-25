@@ -232,7 +232,9 @@ struct GitRepository: Sendable {
     /// Writes the full tree at `revision` into `destination` (blobs are prefetched in bulk).
     func export(revision: String, to destination: URL) async throws {
         try FileSystem.createDirectory(destination)
-        let index = destination.deletingLastPathComponent().appendingPathComponent(Git.indexFileName)
+
+        // A unique index outside the tree: sibling submodules export into one directory concurrently.
+        let index = FileManager.default.temporaryDirectory.appendingPathComponent("\(Git.indexFileName)-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: index) }
 
         // A private index file keeps concurrent exports of the same repository independent.
