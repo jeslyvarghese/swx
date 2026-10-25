@@ -42,13 +42,23 @@ runtime_name() {
     esac
 }
 
+# Prints the end of the failing step's log, which would otherwise vanish with $work.
+readonly log_lines=80
+fail() {
+    echo "$1: $2 failed; last $log_lines lines of its log:" >&2
+    tail -n "$log_lines" "$work/$1-$2.log" >&2
+    exit 1
+}
+
 for platform in "${platforms[@]}"; do
     if ! xcrun simctl list runtimes | grep -q "^$(runtime_name "$platform") "; then
         echo "$platform: skipped (no simulator runtime installed)"
         continue
     fi
-    "$swx" build --platform "$platform" --destination device > "$work/$platform-build.log" 2>&1
-    "$swx" test --platform "$platform" > "$work/$platform-test.log" 2>&1
-    grep -q "TEST SUCCEEDED" "$work/$platform-test.log"
+    "$swx" build --platform "$platform" --destination device > "$work/$platform-build.log" 2>&1 \
+        || fail "$platform" build
+    "$swx" test --platform "$platform" > "$work/$platform-test.log" 2>&1 \
+        || fail "$platform" test
+    grep -q "TEST SUCCEEDED" "$work/$platform-test.log" || fail "$platform" test
     echo "$platform: device build and simulator tests succeeded"
 done

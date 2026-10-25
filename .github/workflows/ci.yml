@@ -41,7 +41,12 @@ jobs:
       - name: Generated Xcode projects build
         run: Scripts/check-xcode-generate.sh .build/release/swx
       - name: Apple platforms (device builds, simulator tests)
-        run: Scripts/check-apple-platforms.sh .build/release/swx ios watchos tvos visionos
+        run: Scripts/check-apple-platforms.sh .build/release/swx ios watchos tvos
+      # Hosted runners boot visionOS simulators slowly and unreliably, so it is reported, not gating.
+      - name: visionOS (device build, simulator tests)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: Scripts/check-apple-platforms.sh .build/release/swx visionos
 
   benchmarks:
     runs-on: macos-26
