@@ -26,6 +26,15 @@ public enum FileSystem {
         return Self.separator + components.joined(separator: Self.separator)
     }
 
+    /// The path with every symlink resolved (`realpath`), as `getcwd` reports it.
+    ///
+    /// Foundation's `resolvingSymlinksInPath` strips `/private` again; this keeps it.
+    public static func realPath(_ url: URL) -> URL {
+        guard let resolved = realpath(url.path, nil) else { return url }
+        defer { free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+    }
+
     /// A user-supplied path made absolute against the working directory, lexically.
     public static func absoluteURL(_ path: String) -> URL {
         URL(fileURLWithPath: Self.normalize(path, relativeTo: FileManager.default.currentDirectoryPath))

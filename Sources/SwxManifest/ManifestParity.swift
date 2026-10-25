@@ -38,7 +38,8 @@ public enum ManifestParity {
     /// Both evaluations run in one scratch package, so relative paths resolve identically.
     private static func checkCompiler(_ contents: String, api: ManifestAPI) async -> ParityOutcome {
         do {
-            let directory = try FileSystem.makeTemporaryDirectory(prefix: Self.scratchPrefix)
+            // The real path, as the CLI gets it from the cwd: `dump-package` sees `/private/var`, not `/var`.
+            let directory = FileSystem.realPath(try FileSystem.makeTemporaryDirectory(prefix: Self.scratchPrefix))
             defer { try? FileSystem.removeTree(directory) }
             try Data(contents.utf8).write(to: directory.appendingPathComponent(WellKnownFile.manifest))
 
