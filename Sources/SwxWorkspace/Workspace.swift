@@ -759,7 +759,8 @@ public struct Workspace: Sendable {
             artifactsDirectory: layout.artifactsDirectory,
             pathStyle: layout.pathStyle,
             mirrors: context.mirrors,
-            previous: previous
+            previous: previous,
+            hostTriple: { [store] in try await Toolchain.hostTriple(store: store) }
         )
 
         // Only touch trees whose version changed or whose directory is missing.

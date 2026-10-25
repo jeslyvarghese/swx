@@ -54,6 +54,8 @@ struct ArtifactInstaller: Sendable {
     let pathStyle: RecordedPathStyle
     let mirrors: DependencyMirrors
     let previous: WorkspaceState
+    /// Only artifact bundle indexes need it, so it is computed on demand.
+    let hostTriple: @Sendable () async throws -> String
 
     /// Installs every remote binary target `manifest` declares.
     func install(package: PackageReference, manifest: Manifest, change: PackageChange) async throws -> PackageArtifacts {
@@ -91,11 +93,20 @@ struct ArtifactInstaller: Sendable {
             }
         }
         guard BinaryArtifactSource.isSupported(url: url) else {
-            return .leftToSwiftPM(reason: "not a zip archive")
+            return .leftToSwiftPM(reason: "neither a zip archive nor an artifact bundle index")
+        }
+
+        // An index names one archive per host; the state still records the index itself.
+        var archiveURL = url
+        var archiveChecksum = checksum
+        if BinaryArtifactSource.isIndex(url: url) {
+            let archive = try await self.source.indexedArchive(url: url, checksum: checksum, hostTriple: try await self.hostTriple())
+            archiveURL = archive.url
+            archiveChecksum = archive.checksum
         }
 
         // Fetch once into the store, then copy-on-write into place.
-        let tree = try await self.source.tree(url: url, checksum: checksum)
+        let tree = try await self.source.tree(url: archiveURL, checksum: archiveChecksum)
         guard let derived = BinaryArtifactSource.derive(in: tree) else {
             return .leftToSwiftPM(reason: "no single artifact in the archive")
         }

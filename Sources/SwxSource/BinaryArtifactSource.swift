@@ -24,6 +24,7 @@ public actor BinaryArtifactSource {
 
     private enum Extension {
         static let zip = "zip"
+        static let index = "artifactbundleindex"
         static let xcframework = "xcframework"
         static let artifactBundle = "artifactbundle"
     }
@@ -46,10 +47,68 @@ public actor BinaryArtifactSource {
         self.limiter = ConcurrencyLimiter(limit: maximumConcurrency)
     }
 
-    /// Only plain zip archives are handled; SwiftPM fetches anything else
-    /// (`.artifactbundleindex`, which picks an archive per host) itself.
+    /// Zip archives, and `.artifactbundleindex` files that name one per host triple.
     public static func isSupported(url: String) -> Bool {
+        Self.isArchive(url: url) || Self.isIndex(url: url)
+    }
+
+    public static func isArchive(url: String) -> Bool {
         URL(string: url)?.pathExtension.lowercased() == Extension.zip
+    }
+
+    public static func isIndex(url: String) -> Bool {
+        URL(string: url)?.pathExtension.lowercased() == Extension.index
+    }
+
+    // MARK: Index files
+
+    /// One archive listed by an `.artifactbundleindex`.
+    public struct IndexedArchive: Sendable, Hashable {
+        public let url: String
+        public let checksum: String
+    }
+
+    private struct IndexFile: Decodable {
+        struct Archive: Decodable {
+            let fileName: String
+            let checksum: String
+            let supportedTriples: [String]
+        }
+
+        let archives: [Archive]
+    }
+
+    private static let parentDirectory = ".."
+
+    /// SwiftPM's choice: the first zip archive listing the host triple, next to the index file.
+    /// The index itself must match the manifest's checksum.
+    public func indexedArchive(url: String, checksum: String, hostTriple: String) async throws -> IndexedArchive {
+        guard let indexURL = URL(string: url) else {
+            throw SourceError(description: "invalid binary target URL: \(url)")
+        }
+        let body = try await HTTP.data(from: indexURL)
+        let actual = ContentHash.sha256(body)
+        guard actual == checksum else {
+            throw SourceError(description: "checksum of \(url) is \(actual), but the manifest expects \(checksum)")
+        }
+        let index: IndexFile
+        do {
+            index = try JSONDecoder().decode(IndexFile.self, from: body)
+        } catch {
+            throw SourceError(description: "\(url) is not a valid artifact bundle index: \(error)")
+        }
+
+        let candidate = index.archives.first { archive in
+            Self.isArchive(url: archive.fileName) && archive.supportedTriples.contains(hostTriple)
+        }
+        guard let archive = candidate else {
+            throw SourceError(description: "\(url) has no archive for '\(hostTriple)'")
+        }
+        guard !archive.fileName.contains(Self.parentDirectory) else {
+            throw SourceError(description: "\(url) names an invalid archive '\(archive.fileName)'")
+        }
+        let archiveURL = indexURL.deletingLastPathComponent().appendingPathComponent(archive.fileName)
+        return IndexedArchive(url: archiveURL.absoluteString, checksum: archive.checksum)
     }
 
     // MARK: Fetching

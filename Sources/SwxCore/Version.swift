@@ -106,10 +106,24 @@ extension Version {
     private static let prereleaseSeparator: Character = "-"
     private static let buildMetadataSeparator: Character = "+"
     private static let requiredNumericComponents = 3
+    /// Lenient parsing (tags) may omit the patch component: `0.4` is 0.4.0.
+    private static let lenientNumericComponents = 2
     private static let tagPrefix: Character = "v"
+
+    /// How strictly the numeric core is read.
+    public enum Parsing: Sendable {
+        /// `MAJOR.MINOR.PATCH`, as in manifests and lockfiles.
+        case strict
+        /// `MAJOR.MINOR[.PATCH]`, as SwiftPM reads git tags.
+        case lenient
+    }
 
     /// Parses `MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]`. All three numeric components are required.
     public init?(_ text: String) {
+        self.init(text, parsing: .strict)
+    }
+
+    public init?(_ text: String, parsing: Parsing) {
         var remainder = Substring(text)
 
         // Split off build metadata first: it may itself contain "-".
@@ -131,10 +145,13 @@ extension Version {
             return nil
         }
 
-        // Exactly three non-negative integers.
+        // Three non-negative integers (two are enough when lenient).
         let numbers = remainder.split(separator: Self.componentSeparator, omittingEmptySubsequences: false)
-        guard numbers.count == Self.requiredNumericComponents else {
-            return nil
+        switch parsing {
+        case .strict:
+            guard numbers.count == Self.requiredNumericComponents else { return nil }
+        case .lenient:
+            guard numbers.count == Self.requiredNumericComponents || numbers.count == Self.lenientNumericComponents else { return nil }
         }
         var values: [Int] = []
         for number in numbers {
@@ -144,15 +161,17 @@ extension Version {
             values.append(value)
         }
 
-        self.init(values[0], values[1], values[2], prereleaseIdentifiers: prerelease, buildMetadataIdentifiers: build)
+        let patch = values.count == Self.requiredNumericComponents ? values[2] : 0
+        self.init(values[0], values[1], patch, prereleaseIdentifiers: prerelease, buildMetadataIdentifiers: build)
     }
 
-    /// Parses a git tag the way SwiftPM does: an optional leading `v`, then a full version.
+    /// Parses a git tag the way SwiftPM does: an optional leading `v`, then a version that may
+    /// omit its patch component.
     public init?(tag: String) {
         guard tag.first == Self.tagPrefix else {
-            self.init(tag)
+            self.init(tag, parsing: .lenient)
             return
         }
-        self.init(String(tag.dropFirst()))
+        self.init(String(tag.dropFirst()), parsing: .lenient)
     }
 }

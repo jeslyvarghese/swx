@@ -33,6 +33,36 @@ public struct Toolchain: Sendable, Hashable {
         return Toolchain(versionDescription: text, toolsVersion: Self.parseToolsVersion(text) ?? .v5_9)
     }
 
+    private enum TargetInfo {
+        static let argument = "-print-target-info"
+        static let target = "target"
+        static let triple = "triple"
+        static let unversionedTriple = "unversionedTriple"
+        static let appleVendor = "-apple-"
+        static let cacheSuffix = "\u{0}target-info"
+    }
+
+    /// The triple SwiftPM matches artifact bundles against: unversioned on Apple platforms
+    /// (`arm64-apple-macosx`), the full triple elsewhere. Cached per toolchain fingerprint.
+    public static func hostTriple(store: Store = .default()) async throws -> String {
+        let fingerprint = ExecutableLookup.fingerprint(of: Self.executable)
+        let cacheURL = store.toolchainCachePath(fingerprint: ContentHash.sha256(fingerprint + TargetInfo.cacheSuffix))
+        if let cached = FileSystem.readIfPresent(cacheURL).map({ String(decoding: $0, as: UTF8.self) }), !cached.isEmpty {
+            return cached
+        }
+
+        let result = try await ProcessRunner.run([Self.executable, TargetInfo.argument])
+        guard let info = try? JSONSerialization.jsonObject(with: result.standardOutput) as? [String: Any],
+              let target = info[TargetInfo.target] as? [String: Any],
+              let unversioned = target[TargetInfo.unversionedTriple] as? String,
+              let versioned = target[TargetInfo.triple] as? String else {
+            throw ManifestError(description: "could not read the host triple from `swift \(TargetInfo.argument)`")
+        }
+        let triple = unversioned.contains(TargetInfo.appleVendor) ? unversioned : versioned
+        try? FileSystem.writeAtomically(Data(triple.utf8), to: cacheURL)
+        return triple
+    }
+
     /// A short, stable key for cache paths that depend on the toolchain.
     public var key: String {
         String(ContentHash.sha256(self.versionDescription).prefix(Self.keyLength))

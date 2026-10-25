@@ -128,7 +128,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
   - Ignores code that only touches build settings.
   - Anything it can't prove harmless falls back to real evaluation.
   - On a 90-manifest corpus of popular packages, 74% parse statically with 0 disagreements against `dump-package`.
-- **Shared binary artifacts.** Remote `binaryTarget` archives are downloaded once per checksum, verified, unzipped once into the store, and cloned into `.build/artifacts`. The downloads overlap with checkouts. SwiftPM finds them already recorded and doesn't fetch or unzip again.
+- **Shared binary artifacts.** Remote `binaryTarget` archives (and `.artifactbundleindex` files, resolved to the host's archive the way SwiftPM picks it) are downloaded once per checksum, verified, unzipped once into the store, and cloned into `.build/artifacts`. The downloads overlap with checkouts. SwiftPM finds them already recorded and doesn't fetch or unzip again.
 - **Content-addressed caches.**
   - Evaluated manifests are keyed by text plus toolchain.
   - Manifest files are keyed by commit.
@@ -242,6 +242,5 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 - **Registry package signatures** (SE-0391) are not validated. Checksums and fingerprints are, and unsigned packages are accepted with SwiftPM's default policy (`warn`).
 - **`--replace-scm-with-registry` / `--use-registry-identity-for-scm`**, which swap git dependencies for registry ones.
 - **Registry packages in Xcode projects** use the same code path but haven't been compared against Xcode.
-- **`.artifactbundleindex` binary targets** are left to SwiftPM, which picks the archive for the host.
 - **Multi-root workspaces.**
 

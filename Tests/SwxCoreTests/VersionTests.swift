@@ -17,6 +17,14 @@ struct VersionTests {
         #expect(Version(text) == nil)
     }
 
+    /// SwiftPM reads tags leniently: `0.4` is 0.4.0 (swift-subprocess tags like that).
+    @Test func parsesTagsWithoutPatch() {
+        #expect(Version(tag: "0.4") == Version(0, 4, 0))
+        #expect(Version(tag: "v1.2-beta.1") == Version(1, 2, 0, prereleaseIdentifiers: ["beta", "1"]))
+        #expect(Version(tag: "1") == nil)
+        #expect(Version("0.4") == nil)
+    }
+
     @Test func parsesTagsWithOptionalPrefix() {
         #expect(Version(tag: "v2.0.1") == Version(2, 0, 1))
         #expect(Version(tag: "2.0.1") == Version(2, 0, 1))
