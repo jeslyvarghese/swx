@@ -264,3 +264,6 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
 
 - **Multi-root workspaces.**
 
+## License
+
+Apache License v2.0 with Runtime Library Exception, the same license as the Swift Package Manager, from which parts of swx are adapted. See [LICENSE.txt](LICENSE.txt) and [NOTICE.txt](NOTICE.txt).

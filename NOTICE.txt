@@ -1,0 +1,20 @@
+swx
+Copyright (c) 2026 Jesly Varghese
+
+Licensed under the Apache License v2.0 with Runtime Library Exception (see LICENSE.txt).
+
+This product includes software adapted from the Swift Package Manager
+(https://github.com/swiftlang/swift-package-manager), Copyright (c) Apple Inc. and the
+Swift project authors, licensed under the Apache License v2.0 with Runtime Library Exception:
+
+  - Sources/SwxSource/RegistrySigning.swift     package signature validation (SE-0391),
+                                                from PackageSigning and PackageRegistry
+  - Sources/SwxSource/AppleCertificates.swift   Apple root and WWDR intermediate certificates,
+                                                from PackageSigning
+  - Sources/SwxSource/CanonicalLocation.swift   CanonicalPackageLocation, from PackageModel
+
+The resolver (Sources/SwxResolver) implements the PubGrub algorithm and follows the design
+and heuristics of SwiftPM's PubGrubDependencyResolver.
+
+File formats (Package.resolved, workspace-state.json, fingerprints, registry metadata) are
+written to match those of the Swift Package Manager and Xcode.

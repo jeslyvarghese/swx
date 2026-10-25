@@ -1,3 +1,6 @@
+// Adapted from SwiftPM's CanonicalPackageLocation (PackageModel; Apache License v2.0 with
+// Runtime Library Exception, Copyright (c) Apple Inc. and the Swift project authors).
+
 import Foundation
 
 /// SwiftPM's `CanonicalPackageLocation`: one spelling for every way of writing a repository URL
