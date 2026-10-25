@@ -122,24 +122,29 @@ test -d "$app/PlugIns/GreetingWidget.appex"
 test -d "$app/Watch/WatchApp.app"
 echo "built MultiApp.app with PlugIns/GreetingWidget.appex and Watch/WatchApp.app"
 
-# 3–4. The watch app and the iOS app launch on their simulators. `swx run` prints simctl's
-# `<bundle id>: <pid>` once launched, then streams the console; stop it there.
+# 3–4. The watch app and the iOS app launch on their simulators. Once launched, `swx run`
+# hands over to `simctl launch --console-pty … <bundle id>` to stream the console; stop it there.
 launch() {
     local platform="$1" product="$2" bundle="$3" log="$work/$2.log"
     "$swx" run --platform "$platform" "$product" > "$log" 2>&1 &
     local runner=$!
-    for _ in $(seq 150); do
-        grep -q "^$bundle: [0-9]" "$log" && break
+    local launched=""
+    for _ in $(seq 200); do
+        if pgrep -f "simctl launch .* $bundle\$" >/dev/null; then
+            launched=yes
+            break
+        fi
         kill -0 "$runner" 2>/dev/null || break
         sleep 2
     done
+    pkill -f "simctl launch .* $bundle\$" 2>/dev/null || true
     kill "$runner" 2>/dev/null || true
-    if ! grep -q "^$bundle: [0-9]" "$log"; then
+    if [ -z "$launched" ]; then
         echo "$product did not launch:" >&2
         tail -20 "$log" >&2
         exit 1
     fi
-    echo "$product launched on a $platform simulator (pid $(grep "^$bundle: " "$log" | head -1 | cut -d' ' -f2))"
+    echo "$product launched on a $platform simulator"
 }
 launch watchos WatchApp com.example.multi.watchkitapp
 launch ios MultiApp com.example.multi

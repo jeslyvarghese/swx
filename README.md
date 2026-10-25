@@ -213,6 +213,7 @@ Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs 
 Scripts/compare-registry.sh                           # registries vs SwiftPM, via Scripts/test-registry.py (open and basic auth)
 Scripts/compare-fingerprints.sh                       # git tag fingerprints vs SwiftPM, and a moved tag refused by both
 Scripts/compare-apple-manifest.sh                     # a dynamic AppleProductTypes app vs xcodebuild (macOS with Xcode)
+Scripts/compare-xcode-apps.sh                         # iOS app + widget + watch app project: resolution vs xcodebuild, build, launch
 swx debug manifest-parity --candidate xcode …         # Xcode ManifestAPI evaluation vs dump-package on the corpus
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package

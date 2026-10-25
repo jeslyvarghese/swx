@@ -28,6 +28,8 @@ jobs:
         run: Scripts/compare-fingerprints.sh .build/release/swx
       - name: Dynamic AppleProductTypes manifests against Xcode
         run: Scripts/compare-apple-manifest.sh .build/release/swx
+      - name: Watch app, widget extension and root package folders against Xcode
+        run: Scripts/compare-xcode-apps.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04
