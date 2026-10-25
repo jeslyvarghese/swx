@@ -194,6 +194,7 @@ These areas are verified byte for byte against SwiftPM or Xcode:
   - credentials as SwiftPM 6.4 finds them: `SWIFTPM_REGISTRY_TOKEN`/`_LOGIN`/`_PASSWORD`, `SWIFTPM_NETRC_DATA`, then the Keychain on macOS (`.netrc` with `--netrc`) or `.netrc` on Linux (`--netrc-file`), sent as basic or bearer auth per `registries.json`
   - releases are immutable, so metadata and manifests are cached in the store and a lockfile restore downloads only the archives
 - **HTTPS git with `.netrc`** works through git itself, which reads `~/.netrc`.
+- **Git tag fingerprints:** like SwiftPM's `checkIntegrity`, the commit behind each checked-out tag is recorded in `<security>/fingerprints/<identity>-<hash>.json` (the same files SwiftPM writes), and a tag that later moves is refused.
 - **swift-syntax prebuilts:** SwiftPM still applies them after `swx` resolves. A macro build took 3.5 s of CPU instead of 55 s.
 - **Mixed use:**
   - `swift package update` works on top of `swx` checkouts.
@@ -202,12 +203,13 @@ These areas are verified byte for byte against SwiftPM or Xcode:
 ## Verification
 
 ```sh
-swift test                                            # 92 unit tests
+swift test                                            # 94 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)
 Scripts/compare-registry.sh                           # registries vs SwiftPM, via Scripts/test-registry.py (open and basic auth)
+Scripts/compare-fingerprints.sh                       # git tag fingerprints vs SwiftPM, and a moved tag refused by both
 Scripts/build-corpus.sh <cache-dir>                   # resolve Corpus/packages.txt into a cache…
 swx debug manifest-parity --cache-path <cache-dir>    # …then check the static parser against dump-package
 ```

@@ -110,3 +110,28 @@ struct RegistryIdentityTests {
         #expect(PackageIdentity(plain: "swift-nio").registryComponents == nil)
     }
 }
+
+struct CanonicalLocationTests {
+    /// Every spelling of a repository maps to one location (SwiftPM's `CanonicalPackageLocation`).
+    @Test func canonicalizesRepositoryLocations() {
+        let expected = "github.com/apple/swift-nio"
+        #expect(CanonicalLocation.compute("https://github.com/apple/swift-nio") == expected)
+        #expect(CanonicalLocation.compute("https://github.com/apple/swift-nio.git") == expected)
+        #expect(CanonicalLocation.compute("HTTPS://GitHub.com/Apple/Swift-NIO/") == expected)
+        #expect(CanonicalLocation.compute("git@github.com:apple/swift-nio.git") == expected)
+        #expect(CanonicalLocation.compute("ssh://git@github.com/apple/swift-nio.git") == expected)
+        #expect(CanonicalLocation.compute("https://user:secret@github.com:443/apple/swift-nio.git") == expected)
+        #expect(CanonicalLocation.compute("https://github.com/apple/swift-nio.git?x=1#y") == expected)
+        // SwiftPM's quirk: the port is stripped before the query, and only when no digit follows it.
+        #expect(CanonicalLocation.compute("https://github.com:443/apple/swift-nio.git?x=1") == "github.com:443/apple/swift-nio")
+        #expect(CanonicalLocation.compute("file:///repos/Kit.git") == "/repos/kit")
+        #expect(CanonicalLocation.compute("/repos/Kit") == "/repos/kit")
+    }
+
+    /// The file-name hash of SwiftPM's fingerprint files (`async-http-client-3c9c1259.json`).
+    @Test func namesSourceControlFingerprintFilesLikeSwiftPM() {
+        let subject = FingerprintSubject.sourceControl(PackageIdentity(plain: "async-http-client"), url: "https://github.com/swift-server/async-http-client.git")
+        #expect(subject.fileName == "async-http-client-3c9c1259.json")
+        #expect(FingerprintSubject.registry(PackageIdentity(plain: "mona.LinkedList")).fileName == "mona.LinkedList.json")
+    }
+}

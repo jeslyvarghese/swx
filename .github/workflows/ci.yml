@@ -24,6 +24,8 @@ jobs:
           Scripts/compare-submodules.sh .build/release/swx
       - name: Package registries against SwiftPM
         run: Scripts/compare-registry.sh .build/release/swx
+      - name: Git tag fingerprints against SwiftPM
+        run: Scripts/compare-fingerprints.sh .build/release/swx
 
   linux:
     runs-on: ubuntu-24.04
@@ -41,6 +43,10 @@ jobs:
           SWX=.build/release/swx Scripts/linux/workflow.sh
       - name: Git LFS dependencies against SwiftPM
         run: SWX="$PWD/.build/release/swx" Scripts/linux/lfs-check.sh
+      - name: Package registries against SwiftPM
+        run: |
+          apt-get update -qq && apt-get install -y -qq python3
+          Scripts/compare-registry.sh .build/release/swx
 
   static-linux:
     runs-on: ubuntu-24.04

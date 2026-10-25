@@ -351,9 +351,14 @@ public struct Workspace: Sendable {
             store: self.store,
             configuration: root.registries,
             credentials: RegistryCredentials(sources: self.options.swiftPM.credentials),
-            fingerprints: FingerprintStore(securityDirectory: self.options.swiftPM.securityDirectory),
+            fingerprints: self.fingerprints,
             maximumConcurrency: self.options.maximumConcurrency
         )
+    }
+
+    /// SwiftPM's fingerprint store, shared with it.
+    private var fingerprints: FingerprintStore {
+        FingerprintStore(securityDirectory: self.options.swiftPM.securityDirectory)
     }
 
     /// Registry versions carry no commit; the solver only reads the version.
@@ -850,7 +855,16 @@ public struct Workspace: Sendable {
             try FileSystem.writeAtomically(metadata, to: destination.appendingPathComponent(WellKnownFile.registryMetadata))
             self.log(.verbose, "downloaded \(pin.package.identity) \(version) (\(strategy))")
 
-        case .version(_, let revision), .branch(_, let revision), .revision(let revision):
+        case .version(let version, let revision):
+            // Like SwiftPM, a tag must keep pointing at the commit first seen for it.
+            if case .remoteSourceControl(let url) = pin.package.kind {
+                try await self.fingerprints.verifyRevision(pin.package.identity, url: url, version: version.description, revision: revision)
+            }
+            let tree = try await context.source.sourceTree(of: pin.package, revision: revision)
+            let strategy = try Materializer.materialize(tree, at: destination)
+            self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
+
+        case .branch(_, let revision), .revision(let revision):
             let tree = try await context.source.sourceTree(of: pin.package, revision: revision)
             let strategy = try Materializer.materialize(tree, at: destination)
             self.log(.verbose, "checked out \(pin.package.identity) \(pin.state) (\(strategy))")
