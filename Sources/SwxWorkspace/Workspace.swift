@@ -105,6 +105,16 @@ public struct Workspace: Sendable {
         let layout: Layout
         let source: RootSource
         let mirrors: DependencyMirrors
+
+        /// Where relative locations (like `Packages/`) are anchored.
+        var directory: URL {
+            switch self.source {
+            case .package(let directory):
+                return directory
+            case .xcode:
+                return self.layout.resolvedFile.deletingLastPathComponent()
+            }
+        }
     }
 
     private enum RootSource: Sendable {
@@ -126,9 +136,8 @@ public struct Workspace: Sendable {
             return try Self.packageContext(directory, stateDirectory: sourcePackages)
 
         case .xcodeProject(let url, let sourcePackages):
-            // Xcode passes its package references as root dependencies, so SwiftPM hashes their locations.
             let project = try await XcodeProjectReader.read(url)
-            let originHash = ContentHash.sha256(project.packageReferences.map(\.locationString).joined())
+            let originHash = ContentHash.sha256(project.originHashContent)
             let manifest = Manifest(
                 name: project.name,
                 toolsVersion: Self.xcodeToolsVersion,
@@ -257,6 +266,8 @@ public struct Workspace: Sendable {
         let rootReference = rootContext.reference
         let overrides = try await self.collectOverrides(
             root: root,
+            packageDirectory: rootContext.directory,
+            editedDependencies: previousState.editedDependencies,
             mirrors: rootContext.mirrors,
             mode: mode,
             previousPins: previousPins,
@@ -371,24 +382,37 @@ public struct Workspace: Sendable {
                 return Pin(package: self.package, state: .branch(name, revision: revision))
             case .revision(let revision):
                 return Pin(package: self.package, state: .revision(revision))
+            case .edited(let previous):
+                // SwiftPM keeps an edited package's pin in Package.resolved.
+                return previous
             case .fileSystem:
                 return nil
             }
         }
 
-        var fileSystemDependency: ManagedDependency? {
-            guard case .fileSystem(let path) = self.state else { return nil }
+        var isEdited: Bool {
+            guard case .edited = self.state else { return false }
+            return true
+        }
 
-            // SwiftPM records path dependencies under their identity, not their name.
-            return ManagedDependency(package: self.package, state: .fileSystem(path: path), subpath: self.package.identity.description)
+        var fileSystemDependency: ManagedDependency? {
+            guard case .fileSystem(let path, let manifestName) = self.state else { return nil }
+
+            // SwiftPM records path dependencies under their identity, named after their manifest.
+            return ManagedDependency(package: self.package, state: .fileSystem(path: path), subpath: self.package.identity.description, name: manifestName)
         }
     }
 
     private enum OverrideState: Sendable {
         case branch(String, revision: String)
         case revision(String)
-        case fileSystem(path: String)
+        case fileSystem(path: String, manifestName: String)
+        /// Under `swift package edit`: used from its editable copy, owned by SwiftPM.
+        case edited(previousPin: Pin?)
     }
+
+    /// `swift package edit` puts editable copies here unless `--path` is given.
+    private static let editedPackagesDirectory = "Packages"
 
     private struct Overrides {
         var rootDependencies: [DependencyDeclaration] = []
@@ -398,6 +422,8 @@ public struct Workspace: Sendable {
     /// Fixes unversioned root dependencies outside the solver and lifts their dependencies to the root.
     private func collectOverrides(
         root: Manifest,
+        packageDirectory: URL,
+        editedDependencies: [PackageIdentity: EditedDependency],
         mirrors: DependencyMirrors,
         mode: ResolveMode,
         previousPins: [PackageIdentity: Pin],
@@ -408,6 +434,15 @@ public struct Workspace: Sendable {
         var result = Overrides()
         var pending = root.requiredDependencies(role: .root)
 
+        // Edited packages override every requirement on them and contribute their copy's dependencies.
+        for (identity, edited) in editedDependencies {
+            guard let previous = previousPins[identity] else { continue }
+            let path = edited.path ?? packageDirectory.appendingPathComponent(Self.editedPackagesDirectory).appendingPathComponent(edited.subpath).path
+            let manifest = try await loader.load(packageAt: URL(fileURLWithPath: path))
+            result.overridden[identity] = Override(package: mirrors.effective(previous.package), state: .edited(previousPin: previous))
+            pending += manifest.requiredDependencies(role: .dependency)
+        }
+
         while !pending.isEmpty {
             let dependency = pending.removeFirst()
             guard let declaration = dependency.declaration.map(mirrors.effective) else {
@@ -415,6 +450,7 @@ public struct Workspace: Sendable {
             }
             let identity = declaration.package.identity
             await facts.noteTraits(dependency.traits, for: identity)
+            guard result.overridden[identity]?.isEdited != true else { continue }
 
             // Versioned dependencies go to the solver as-is.
             guard declaration.requirement.isUnversioned else {
@@ -435,8 +471,8 @@ public struct Workspace: Sendable {
                 override = Override(package: declaration.package, state: .revision(revision))
                 manifest = try await self.manifest(of: declaration.package, at: revision, source: source, loader: loader)
             case (_, .fileSystem(let path)):
-                override = Override(package: declaration.package, state: .fileSystem(path: path))
                 manifest = try await loader.load(packageAt: URL(fileURLWithPath: path))
+                override = Override(package: declaration.package, state: .fileSystem(path: path, manifestName: manifest.name))
             default:
                 throw WorkspaceError(description: "unsupported requirement for \(identity): \(declaration.requirement)")
             }
@@ -472,7 +508,12 @@ public struct Workspace: Sendable {
 
     /// Are all pins already checked out at the right revisions?
     private static func checkoutsMatch(pins: [Pin], state: WorkspaceState, layout: Layout) -> Bool {
-        pins.allSatisfy { pin in
+        let preserved = state.preservedIdentities
+        return pins.allSatisfy { pin in
+            // Edited (and other SwiftPM-managed) dependencies are not ours to check out.
+            if preserved.contains(pin.package.identity) {
+                return true
+            }
             guard let managed = state.dependencies[pin.package.identity],
                   case .sourceControlCheckout(let checkedOut) = managed.state,
                   checkedOut == pin.state else {

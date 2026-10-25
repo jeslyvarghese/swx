@@ -24,9 +24,9 @@ struct XcodeOptions: ParsableArguments {
     @OptionGroup var global: GlobalOptions
 
     func makeWorkspace() throws -> (Workspace, URL) {
-        let projectURL = try self.project.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        let projectURL = try self.project.map { FileSystemPaths.absolute($0) }
             ?? Workspace.locateXcodeProject(in: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
-        let sourcePackages = URL(fileURLWithPath: self.sourcePackages).standardizedFileURL
+        let sourcePackages = FileSystemPaths.absolute(self.sourcePackages)
         let workspace = Workspace(options: WorkspaceOptions(
             root: .xcodeProject(projectURL, sourcePackages: sourcePackages),
             cacheDirectory: self.global.cachePath.map { URL(fileURLWithPath: $0) },

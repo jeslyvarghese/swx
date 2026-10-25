@@ -2,6 +2,7 @@ import Foundation
 import SwiftParser
 import SwiftSyntax
 import SwxCore
+import SwxSystem
 
 /// Reads declarative `Package.swift` files without compiling them.
 ///
@@ -739,10 +740,10 @@ public enum StaticManifestParser {
             return Self.unwrapParentheses(only.expression)
         }
 
+        /// Joins lexically, like SwiftPM's `AbsolutePath` (no symlink resolution, `/private` kept).
         private func resolve(path: String) -> String? {
             guard let packageDirectory = self.packageDirectory else { return nil }
-            let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : packageDirectory.appendingPathComponent(path)
-            return url.standardizedFileURL.path
+            return FileSystem.normalize(path, relativeTo: packageDirectory.path)
         }
     }
 

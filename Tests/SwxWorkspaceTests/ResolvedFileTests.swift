@@ -101,6 +101,18 @@ struct ResolvedFileTests {
 }
 
 struct WorkspaceStateTests {
+    /// SwiftPM 6.4's state after `swift package edit swift-argument-parser`.
+    @Test func preservesEditedDependenciesByteForByte() throws {
+        let url = try #require(Bundle.module.url(forResource: "workspace-state-edited", withExtension: "json", subdirectory: "Fixtures"))
+        let original = try Data(contentsOf: url)
+        let decoded = try #require(WorkspaceState.decodeIfCompatible(original))
+
+        #expect(decoded.editedDependencies[PackageIdentity(plain: "swift-argument-parser")] == EditedDependency(subpath: "swift-argument-parser", path: nil))
+        #expect(decoded.dependencies[PackageIdentity(plain: "swift-argument-parser")] == nil)
+        #expect(decoded.dependencies.count == 4)
+        #expect(try decoded.encode() == original)
+    }
+
     @Test func roundTripsSwiftPMOutputByteForByte() throws {
         let original = Data(swiftPMWorkspaceState.utf8)
         let decoded = try #require(WorkspaceState.decodeIfCompatible(original))

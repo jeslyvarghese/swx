@@ -27,3 +27,24 @@ struct XcodeRequirementTests {
         }
     }
 }
+
+struct XcodeOriginHashTests {
+    private func remote(_ url: String) -> XcodePackageReference {
+        XcodePackageReference(location: .remote(url: url), requirement: .unversioned)
+    }
+
+    private func local(_ path: String) -> XcodePackageReference {
+        XcodePackageReference(location: .local(path: path), requirement: .unversioned)
+    }
+
+    /// Declared as log, LocalKit, argument-parser, Zed; Xcode hashed localkit, argument-parser, log, zed.
+    @Test func ordersLocationsByIdentity() {
+        let content = XcodeProject.originHashContent([
+            self.remote("https://github.com/apple/swift-log.git"),
+            self.local("/tmp/x/LocalKit"),
+            self.remote("https://github.com/apple/swift-argument-parser.git"),
+            self.local("/tmp/x/Zed"),
+        ])
+        #expect(content == "/tmp/x/LocalKit" + "https://github.com/apple/swift-argument-parser.git" + "https://github.com/apple/swift-log.git" + "/tmp/x/Zed")
+    }
+}

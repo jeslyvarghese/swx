@@ -12,17 +12,33 @@ public struct ManagedDependency: Sendable, Hashable {
     public let state: State
     /// Directory name under `.build/checkouts`.
     public let subpath: String
+    /// The name SwiftPM records: the manifest's name for path dependencies, else the location's.
+    public let name: String
 
-    public init(package: PackageReference, state: State, subpath: String) {
+    public init(package: PackageReference, state: State, subpath: String, name: String? = nil) {
         self.package = package
         self.state = state
         self.subpath = subpath
+        self.name = name ?? package.name
+    }
+}
+
+/// A dependency SwiftPM is managing itself (`swift package edit`), which swx must not touch.
+public struct EditedDependency: Sendable, Hashable {
+    public let subpath: String
+    /// The `--path` given to `swift package edit`; `nil` means `Packages/<subpath>`.
+    public let path: String?
+
+    public init(subpath: String, path: String?) {
+        self.subpath = subpath
+        self.path = path
     }
 }
 
 /// `.build/workspace-state.json` (format v7), as SwiftPM writes it.
 ///
-/// Artifacts and prebuilts are carried through untouched so `swift build` keeps its own data.
+/// Artifacts, prebuilts and any dependency entry swx doesn't model (edited, custom, …) are
+/// carried through untouched, so SwiftPM keeps its own data.
 public struct WorkspaceState: Sendable {
     public static let formatVersion = 7
 
@@ -30,10 +46,46 @@ public struct WorkspaceState: Sendable {
     var artifacts: [JSONValue]
     var prebuilts: [JSONValue]
 
+    /// Raw entries for dependencies swx doesn't manage, keyed by identity.
+    private var preserved: [PackageIdentity: JSONValue] = [:]
+
     public init(dependencies: [PackageIdentity: ManagedDependency]) {
         self.dependencies = dependencies
         self.artifacts = []
         self.prebuilts = []
+    }
+
+    /// Dependencies under `swift package edit`.
+    public var editedDependencies: [PackageIdentity: EditedDependency] {
+        var result: [PackageIdentity: EditedDependency] = [:]
+        for (identity, raw) in self.preserved {
+            guard case .object(let entry) = raw,
+                  case .object(let state)? = entry[Key.state],
+                  case .string(StateName.edited)? = state[Key.name],
+                  case .string(let subpath)? = entry[Key.subpath] else { continue }
+            let path: String?
+            if case .string(let value)? = state[Key.path] {
+                path = value
+            } else {
+                path = nil
+            }
+            result[identity] = EditedDependency(subpath: subpath, path: path)
+        }
+        return result
+    }
+
+    /// Identities swx must leave alone (their entries are preserved verbatim).
+    public var preservedIdentities: Set<PackageIdentity> {
+        Set(self.preserved.keys)
+    }
+
+    private enum Key {
+        static let state = "state"
+        static let name = "name"
+        static let path = "path"
+        static let subpath = "subpath"
+        static let packageRef = "packageRef"
+        static let identity = "identity"
     }
 
     // MARK: Reading
@@ -43,24 +95,52 @@ public struct WorkspaceState: Sendable {
         guard let stored = try? JSONDecoder().decode(Stored.self, from: data), stored.version == Self.formatVersion else {
             return nil
         }
+        // Entries swx understands become models; everything else is kept as-is.
         var dependencies: [PackageIdentity: ManagedDependency] = [:]
-        for dependency in stored.object.dependencies {
-            guard let managed = dependency.managed else { continue }
-            dependencies[managed.package.identity] = managed
+        var preserved: [PackageIdentity: JSONValue] = [:]
+        for raw in stored.object.dependencies {
+            if let managed = Self.model(raw) {
+                dependencies[managed.package.identity] = managed
+                continue
+            }
+            guard let identity = Self.identity(of: raw) else { continue }
+            preserved[identity] = raw
         }
         var state = WorkspaceState(dependencies: dependencies)
         state.artifacts = stored.object.artifacts
         state.prebuilts = stored.object.prebuilts
+        state.preserved = preserved
         return state
+    }
+
+    private static func model(_ raw: JSONValue) -> ManagedDependency? {
+        guard let data = try? JSONEncoder().encode(raw),
+              let stored = try? JSONDecoder().decode(StoredDependency.self, from: data) else {
+            return nil
+        }
+        return stored.managed
+    }
+
+    private static func identity(of raw: JSONValue) -> PackageIdentity? {
+        guard case .object(let entry) = raw,
+              case .object(let reference)? = entry[Key.packageRef],
+              case .string(let identity)? = reference[Key.identity] else {
+            return nil
+        }
+        return PackageIdentity(plain: identity)
     }
 
     // MARK: Writing
 
     /// Same encoder as SwiftPM; unlike `Package.resolved`, no trailing newline.
     public func encode() throws -> Data {
-        let dependencies = self.dependencies.values
-            .sorted { $0.package.identity < $1.package.identity }
-            .map(StoredDependency.init)
+        // Merge managed and preserved entries, sorted by identity like SwiftPM.
+        var entries: [(PackageIdentity, JSONValue)] = self.preserved.map { ($0.key, $0.value) }
+        for dependency in self.dependencies.values where self.preserved[dependency.package.identity] == nil {
+            let data = try JSONEncoder().encode(StoredDependency(dependency))
+            entries.append((dependency.package.identity, try JSONDecoder().decode(JSONValue.self, from: data)))
+        }
+        let dependencies = entries.sorted { $0.0 < $1.0 }.map(\.1)
         let stored = Stored(
             object: StoredObject(artifacts: self.artifacts, dependencies: dependencies, prebuilts: self.prebuilts),
             version: Self.formatVersion
@@ -77,10 +157,10 @@ public struct WorkspaceState: Sendable {
 
     private struct StoredObject: Codable {
         let artifacts: [JSONValue]
-        let dependencies: [StoredDependency]
+        let dependencies: [JSONValue]
         let prebuilts: [JSONValue]
 
-        init(artifacts: [JSONValue], dependencies: [StoredDependency], prebuilts: [JSONValue]) {
+        init(artifacts: [JSONValue], dependencies: [JSONValue], prebuilts: [JSONValue]) {
             self.artifacts = artifacts
             self.dependencies = dependencies
             self.prebuilts = prebuilts
@@ -89,7 +169,7 @@ public struct WorkspaceState: Sendable {
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             self.artifacts = try container.decodeIfPresent([JSONValue].self, forKey: .artifacts) ?? []
-            self.dependencies = (try? container.decode([StoredDependency].self, forKey: .dependencies)) ?? []
+            self.dependencies = (try? container.decode([JSONValue].self, forKey: .dependencies)) ?? []
             self.prebuilts = try container.decodeIfPresent([JSONValue].self, forKey: .prebuilts) ?? []
         }
     }
@@ -116,6 +196,7 @@ public struct WorkspaceState: Sendable {
     private enum StateName {
         static let sourceControlCheckout = "sourceControlCheckout"
         static let fileSystem = "fileSystem"
+        static let edited = "edited"
     }
 
     private struct StoredDependency: Codable {
@@ -132,7 +213,7 @@ public struct WorkspaceState: Sendable {
                 identity: dependency.package.identity.description,
                 kind: dependency.package.kind.serializedName,
                 location: dependency.package.kind.location,
-                name: dependency.package.name
+                name: dependency.name
             )
             self.subpath = dependency.subpath
 
@@ -192,9 +273,9 @@ public struct WorkspaceState: Sendable {
                 } else {
                     pin = .revision(checkout.revision)
                 }
-                return ManagedDependency(package: package, state: .sourceControlCheckout(pin), subpath: self.subpath)
+                return ManagedDependency(package: package, state: .sourceControlCheckout(pin), subpath: self.subpath, name: self.packageRef.name)
             case StateName.fileSystem:
-                return ManagedDependency(package: package, state: .fileSystem(path: self.state.path ?? ""), subpath: self.subpath)
+                return ManagedDependency(package: package, state: .fileSystem(path: self.state.path ?? ""), subpath: self.subpath, name: self.packageRef.name)
             default:
                 return nil
             }

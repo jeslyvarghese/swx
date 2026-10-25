@@ -2,6 +2,35 @@ import Foundation
 
 /// Small file-system helpers used by the shell layers.
 public enum FileSystem {
+    private static let separator = "/"
+    private static let currentDirectoryComponent: Substring = "."
+    private static let parentDirectoryComponent: Substring = ".."
+
+    /// Collapses `.` and `..` lexically, like SwiftPM's `AbsolutePath`.
+    ///
+    /// Unlike Foundation's `standardizedFileURL`, symlinks are left alone and `/private` is kept,
+    /// so paths written to SwiftPM's files match what SwiftPM itself writes.
+    public static func normalize(_ path: String, relativeTo base: String) -> String {
+        let joined = path.hasPrefix(Self.separator) ? path : base + Self.separator + path
+        var components: [Substring] = []
+        for component in joined.split(separator: "/") {
+            switch component {
+            case Self.currentDirectoryComponent:
+                continue
+            case Self.parentDirectoryComponent:
+                _ = components.popLast()
+            default:
+                components.append(component)
+            }
+        }
+        return Self.separator + components.joined(separator: Self.separator)
+    }
+
+    /// A user-supplied path made absolute against the working directory, lexically.
+    public static func absoluteURL(_ path: String) -> URL {
+        URL(fileURLWithPath: Self.normalize(path, relativeTo: FileManager.default.currentDirectoryPath))
+    }
+
     public static func exists(_ url: URL) -> Bool {
         FileManager.default.fileExists(atPath: url.path)
     }

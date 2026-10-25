@@ -55,7 +55,7 @@ struct GlobalOptions: ParsableArguments {
     }
 
     var packageURL: URL {
-        URL(fileURLWithPath: self.packagePath).standardizedFileURL
+        FileSystemPaths.absolute(self.packagePath)
     }
 
     func workspaceOptions() -> WorkspaceOptions {

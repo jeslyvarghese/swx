@@ -30,6 +30,18 @@ public struct XcodeProject: Sendable {
     public let packageReferences: [XcodePackageReference]
     /// Where Xcode keeps the shared `Package.resolved`.
     public let resolvedFile: URL
+
+    /// What Xcode hashes into `originHash`: reference locations ordered by package identity
+    /// (verified against xcodebuild with interleaved local and remote references).
+    public var originHashContent: String {
+        Self.originHashContent(self.packageReferences)
+    }
+
+    public static func originHashContent(_ references: [XcodePackageReference]) -> String {
+        references.map(\.locationString)
+            .sorted { PackageIdentity(location: $0) < PackageIdentity(location: $1) }
+            .joined()
+    }
 }
 
 public struct XcodeProjectError: Error, CustomStringConvertible {
@@ -150,7 +162,8 @@ public enum XcodeProjectReader {
                 references.append(XcodePackageReference(location: .remote(url: url), requirement: requirement))
             case ObjectType.localPackage:
                 guard let relative = object[ObjectKey.relativePath] as? String else { continue }
-                let path = project.deletingLastPathComponent().appendingPathComponent(relative).standardizedFileURL.path
+                // Xcode's form: symlinks resolved and `/private` stripped (`/tmp/…`, not `/private/tmp/…`).
+                let path = project.deletingLastPathComponent().appendingPathComponent(relative).resolvingSymlinksInPath().path
                 references.append(XcodePackageReference(location: .local(path: path), requirement: .unversioned))
             default:
                 continue

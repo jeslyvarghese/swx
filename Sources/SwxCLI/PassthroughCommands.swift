@@ -20,7 +20,7 @@ enum Passthrough {
     /// Resolves (unless told not to), then replaces this process with `swift <command> …`.
     static func run(_ command: [String], arguments: [String], resolution: Resolution) async throws -> Never {
         // `.swift-version` picks the toolchain for both swx and the SwiftPM it hands over to.
-        let packageURL = URL(fileURLWithPath: Self.packagePath(in: arguments)).standardizedFileURL
+        let packageURL = FileSystemPaths.absolute(Self.packagePath(in: arguments))
         try await CommandSupport.reportingErrors {
             try await Toolchains().prepare(for: packageURL, missing: .install) { CommandSupport.status($0) }
         }
@@ -57,7 +57,7 @@ enum Passthrough {
 
     private static func resolve(packagePath: String) async throws {
         let workspace = Workspace(options: WorkspaceOptions(
-            root: .package(URL(fileURLWithPath: packagePath).standardizedFileURL),
+            root: .package(FileSystemPaths.absolute(packagePath)),
             cacheDirectory: nil,
             maximumConcurrency: ResolverDefaults.concurrency,
             verbosity: .normal
@@ -162,7 +162,7 @@ struct AppleArguments {
             ),
             product: values[Option.product],
             configuration: values[Option.configuration] ?? values[Option.configurationShort] ?? Self.defaultConfiguration,
-            packageDirectory: URL(fileURLWithPath: values[Option.packagePath] ?? ".").standardizedFileURL
+            packageDirectory: FileSystemPaths.absolute(values[Option.packagePath] ?? ".")
         )
     }
 

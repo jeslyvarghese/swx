@@ -113,9 +113,14 @@ let package = Package(
         .testTarget(name: "SwxCoreTests", dependencies: ["SwxCore"]),
         .testTarget(name: "SwxResolverTests", dependencies: ["SwxCore", "SwxResolver"]),
         .testTarget(name: "SwxManifestTests", dependencies: ["SwxCore", "SwxManifest"]),
-        .testTarget(name: "SwxWorkspaceTests", dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"]),
+        .testTarget(
+            name: "SwxWorkspaceTests",
+            dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(name: "SwxXcodeTests", dependencies: ["SwxCore", "SwxXcode"]),
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
+        .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
     ]
 )
