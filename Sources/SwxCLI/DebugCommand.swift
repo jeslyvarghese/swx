@@ -7,7 +7,7 @@ struct DebugCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "debug",
         abstract: "Verification tools for swx itself.",
-        subcommands: [ManifestParityCommand.self]
+        subcommands: [ManifestParityCommand.self, TagParityCommand.self]
     )
 }
 
@@ -60,6 +60,31 @@ struct ManifestParityCommand: AsyncParsableCommand {
             return .toolchainManifestAPI
         case .xcode:
             return .xcodeManifestAPI
+        }
+    }
+}
+
+/// Compares tag listings over HTTP (`ls-refs`) with `git ls-remote`.
+struct TagParityCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tag-parity",
+        abstract: "Check that listing tags over HTTP matches git ls-remote."
+    )
+
+    @Argument(help: "Repository URLs.")
+    var urls: [String]
+
+    func run() async throws {
+        let diagnostics = Diagnostics(cacheDirectory: nil, maximumConcurrency: ResolverDefaults.concurrency)
+        var mismatches = 0
+        for url in self.urls {
+            let result = try await diagnostics.tagListingMatches(url: url)
+            let method = result.viaHTTP ? "ls-refs" : "fallback to git"
+            print("\(result.matches ? "same" : "DIFFERENT") \(url): \(result.count) tags (\(method))")
+            mismatches += result.matches ? 0 : 1
+        }
+        if mismatches > 0 {
+            throw ExitCode.failure
         }
     }
 }

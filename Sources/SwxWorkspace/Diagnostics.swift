@@ -50,6 +50,13 @@ public struct Diagnostics: Sendable {
         self.maximumConcurrency = maximumConcurrency
     }
 
+    /// Whether listing `url`'s tags over HTTP (`ls-refs`) gives exactly what `git ls-remote` does.
+    public func tagListingMatches(url: String) async throws -> (matches: Bool, count: Int, viaHTTP: Bool) {
+        let (http, git) = try await GitHTTP.compareWithGit(url: url)
+        guard let http else { return (true, git.count, false) }
+        return (http == git, git.count, true)
+    }
+
     /// Runs every manifest seen by past resolutions through both the parser and `dump-package`.
     public func manifestParity(limit: Int?, reader: ManifestReader = .staticParser) async throws -> ManifestParityReport {
         let candidate = reader.candidate

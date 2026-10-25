@@ -87,8 +87,13 @@ struct GitRepository: Sendable {
 
     // MARK: Remote queries
 
-    /// Lists tags without cloning: one request to the server.
+    /// Lists tags without cloning: one request to the server, over HTTP directly when the
+    /// remote speaks git's protocol v2, else through `git ls-remote` (SSH, credentials, …).
     static func listRemoteTags(url: String) async throws -> [RemoteTag] {
+        if let tags = await GitHTTP.listTags(url: url) {
+            Trace.event("ls-refs \(url)")
+            return tags
+        }
         let result = try await Self.withNetworkRetry {
             try await ProcessRunner.run([Git.executable, "ls-remote", "--tags", url], environment: Self.nonInteractive)
         }

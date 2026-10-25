@@ -85,6 +85,7 @@ Environment variables:
 | `SWX_HOME` | Toolchain location. Default: `~/.local/share/swx`. |
 | `SWX_TRACE=1` | Prints a timestamped timeline of every subprocess. |
 | `SWX_STATIC_MANIFESTS=0` | Always evaluates manifests with the compiler. |
+| `SWX_GIT_HTTP=0` | Lists tags with `git ls-remote` instead of HTTP. |
 | `SWX_BUILD_CACHE=0` | Disables the shared compilation cache. `=1` opts into it with SwiftPM's native build system. |
 
 ## Benchmarks
@@ -117,6 +118,7 @@ Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
 - **Blobless bare clones** in one global store.
   - Listing files at any tag is local.
   - All the manifests one resolution step needs arrive in a single batched fetch.
+- **Tag listing over HTTP.** HTTPS remotes are asked for their tags with git's protocol v2 `ls-refs` directly, on connections reused across a host's repositories, instead of starting `git ls-remote` per package (falling back to it for SSH, credentials or older servers). With a warm store and no lockfile, Vapor's 32 packages resolve in 0.9 s instead of 1.6 s. `swx debug tag-parity <urls>` compares both listings.
 - **Pipelined graph walk.** As soon as a manifest loads, `swx` lists its dependencies' tags and loads their likely manifests. The graph streams in instead of being explored one level at a time.
 - **Speculative checkout export**, overlapped with resolution.
 - **Copy-on-write checkouts.**

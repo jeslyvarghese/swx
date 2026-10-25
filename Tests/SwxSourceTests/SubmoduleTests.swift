@@ -95,3 +95,31 @@ struct LFSTests {
         #expect(files.map(\.path) == ["Sources/Kit/Resources/data file.bin"])
     }
 }
+
+struct GitHTTPTests {
+    @Test func encodesPacketLines() {
+        #expect(GitHTTP.packetLine("command=ls-refs\n") == "0014command=ls-refs\n")
+        #expect(GitHTTP.packetLine("") == "0004")
+    }
+
+    @Test func derivesUploadPackEndpoints() {
+        #expect(GitHTTP.endpoint(for: "https://github.com/apple/swift-nio")?.absoluteString == "https://github.com/apple/swift-nio.git/git-upload-pack")
+        #expect(GitHTTP.endpoint(for: "https://github.com/apple/swift-nio.git/")?.absoluteString == "https://github.com/apple/swift-nio.git/git-upload-pack")
+        // SSH, plain HTTP and embedded credentials stay with git.
+        #expect(GitHTTP.endpoint(for: "git@github.com:apple/swift-nio.git") == nil)
+        #expect(GitHTTP.endpoint(for: "http://example.com/a.git") == nil)
+        #expect(GitHTTP.endpoint(for: "https://user:token@example.com/a.git") == nil)
+    }
+
+    /// Annotated tags resolve to their commit (`peeled:`), like `ls-remote`'s `^{}` lines.
+    @Test func parsesRefListings() throws {
+        let lightweight = String(repeating: "a", count: 40)
+        let tag = String(repeating: "b", count: 40)
+        let commit = String(repeating: "c", count: 40)
+        let body = GitHTTP.packetLine("\(lightweight) refs/tags/1.0.0\n")
+            + GitHTTP.packetLine("\(tag) refs/tags/2.0.0 peeled:\(commit)\n") + "0000"
+        let tags = try #require(GitHTTP.parse(Data(body.utf8)))
+        #expect(tags == [RemoteTag(name: "1.0.0", revision: lightweight), RemoteTag(name: "2.0.0", revision: commit)])
+        #expect(GitHTTP.parse(Data("<html>login</html>".utf8)) == nil)
+    }
+}
