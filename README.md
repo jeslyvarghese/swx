@@ -54,6 +54,7 @@ xcodebuild -clonedSourcePackagesDirPath SourcePackages -disableAutomaticPackageR
 # Toolchains (.swift-version is honoured by every command, and installed on demand)
 swx toolchain list --available
 swx toolchain install 6.4
+swx toolchain install main-snapshot   # also 6.5-snapshot, main-snapshot-2026-10-17, or a snapshot tag
 swx toolchain use 6.4          # writes .swift-version
 swx toolchain which
 
@@ -84,7 +85,7 @@ Environment variables:
 | `SWX_HOME` | Toolchain location. Default: `~/.local/share/swx`. |
 | `SWX_TRACE=1` | Prints a timestamped timeline of every subprocess. |
 | `SWX_STATIC_MANIFESTS=0` | Always evaluates manifests with the compiler. |
-| `SWX_BUILD_CACHE=0` | Disables the shared compilation cache. |
+| `SWX_BUILD_CACHE=0` | Disables the shared compilation cache. `=1` opts into it with SwiftPM's native build system. |
 
 ## Benchmarks
 
@@ -236,7 +237,7 @@ CI (`.github/workflows/ci.yml`) runs the unit tests and differential checks on m
   - `xcodebuild` already supports `AppleProductTypes` apps, signing (`-allowProvisioningUpdates`) and every destination.
   - Host builds go through SwiftPM, which also runs swift-build.
 - **`AppleProductTypes` manifests** that the static parser declines are compiled against Xcode's ManifestAPI (which ships `AppleProductTypes`), run in SwiftPM's sandbox, and decoded from PackageDescription's own serialization; the command-line SwiftPM can't import that module at all. This needs Xcode. Over the 88-manifest corpus, that path agrees with `dump-package` on every manifest (`swx debug manifest-parity --candidate xcode`).
-- **The shared compilation cache** (`--enable-build-caching --build-cache-path <store>/cas`) turns on automatically only with toolchains whose SwiftPM has those flags. Swift 6.4 and 6.4.1 don't, so on them `swx` relies on SwiftPM's prebuilts and incremental builds.
+- **The shared compilation cache** uses SwiftPM's `--enable-build-caching` where a toolchain has it (none does yet, 6.5 snapshots included). Otherwise it uses the compiler's own CAS (`-cache-compile-job`, with each package root mapped to one prefix, so dependencies compiled in one project hit in another). That works only under SwiftPM's native build system, which 6.4 marks deprecated, so it turns on when you pass `--build-system native`, or with `SWX_BUILD_CACHE=1`, which also selects it. Measured on swift-collections (release): 6.4 s for the first project, 1.7 s for the second.
 - **Manifest evaluation** still shells out to `swift package dump-package`, and only for manifests the static parser declines.
 
 ## Not yet supported

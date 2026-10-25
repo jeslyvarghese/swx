@@ -42,7 +42,11 @@ enum Passthrough {
 
         // Builds share one compilation cache across projects when the toolchain can.
         if Self.compilingCommands.contains(command) {
-            invocation += await HostBuilds.cacheArguments(existing: arguments, cacheDirectory: nil)
+            invocation += await HostBuilds.cacheArguments(
+                existing: arguments,
+                cacheDirectory: nil,
+                packageDirectory: FileSystemPaths.absolute(Self.packagePath(in: arguments))
+            )
         }
         ProcessRunner.exec(invocation + arguments)
     }
