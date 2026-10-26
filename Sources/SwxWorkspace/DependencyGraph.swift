@@ -140,6 +140,7 @@ extension Workspace {
             location: dependency.package.kind.location,
             version: version,
             pinned: pinned,
+            reference: dependency.package,
             path: directory.path,
             role: .dependency
         )

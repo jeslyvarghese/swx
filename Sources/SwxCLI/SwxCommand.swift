@@ -12,8 +12,8 @@ public struct SwxCommand: AsyncParsableCommand {
         abstract: "A fast, drop-in companion to SwiftPM.",
         version: "0.2.0",
         subcommands: [
-            PackageCommand.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
-            Graph.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
+            PackageCommand.self, Add.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
+            Graph.self, Why.self, Outdated.self, Licenses.self, Inspect.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
         ]
     )
 
@@ -131,8 +131,27 @@ struct Resolve: AsyncParsableCommand {
 
     @OptionGroup var global: GlobalOptions
 
+    @Flag(help: "Only check that Package.resolved is up to date (as `uv lock --check`); exit 1 if resolving would change it.")
+    var check = false
+
     func run() async throws {
-        try await ResolveRunner.run(mode: .respectPins, global: self.global)
+        guard self.check else {
+            try await ResolveRunner.run(mode: .respectPins, global: self.global)
+            return
+        }
+
+        // Nothing is written or checked out; the exit status is the answer.
+        let status = try await CommandSupport.reportingErrors { try await self.global.makeWorkspace().checkLockfile() }
+        switch status {
+        case .upToDate:
+            print("Package.resolved is up to date")
+        case .missing:
+            FileHandle.standardError.write(Data("error: Package.resolved is missing; run `swx package resolve`\n".utf8))
+            throw ExitCode.failure
+        case .stale(let reason):
+            FileHandle.standardError.write(Data("error: Package.resolved is out of date (\(reason)); run `swx package resolve`\n".utf8))
+            throw ExitCode.failure
+        }
     }
 }
 

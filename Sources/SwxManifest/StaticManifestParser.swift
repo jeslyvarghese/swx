@@ -573,12 +573,19 @@ public enum StaticManifestParser {
             let plugins = arguments[Label.plugins].map { self.list($0, self.pluginUsage) } ?? []
             guard let dependencies, let plugins else { return nil }
 
+            // A `path:` must be literal (or `nil`), like everything else read here.
+            var path: String?
+            if let pathExpression = arguments[Label.path], !pathExpression.is(NilLiteralExprSyntax.self) {
+                guard let literal = self.string(pathExpression) else { return nil }
+                path = literal
+            }
+
             // Binary targets must name their artifact literally, or resolution can't fetch it.
             guard kind == .binary else {
-                return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins)
+                return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins, path: path)
             }
             guard let location = self.binaryLocation(arguments) else { return nil }
-            return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins, binaryLocation: location)
+            return Manifest.Target(name: name, kind: kind, dependencies: dependencies, pluginUsages: plugins, binaryLocation: location, path: path)
         }
 
         private func binaryLocation(_ arguments: Arguments) -> Manifest.Target.BinaryLocation? {

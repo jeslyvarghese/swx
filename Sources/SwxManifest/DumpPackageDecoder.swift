@@ -185,7 +185,8 @@ enum DumpPackageDecoder {
             kind: kind,
             dependencies: dependencies,
             pluginUsages: plugins,
-            binaryLocation: kind == .binary ? Self.binaryLocation(json) : nil
+            binaryLocation: kind == .binary ? Self.binaryLocation(json) : nil,
+            path: json[Key.path] as? String
         )
     }
 

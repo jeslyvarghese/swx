@@ -84,7 +84,8 @@ public struct Toolchain: Sendable, Hashable {
 /// the cache is memoization of a pure function `(manifest, toolchain) → Manifest`.
 public actor ManifestLoader {
     // 7: target dependency conditions carry platforms. 8: dependency traits carry their conditions.
-    private static let cacheFormatVersion = "8"
+    // 9: targets carry their `path:`.
+    private static let cacheFormatVersion = "9"
     private static let evaluationPrefix = "swx-manifest"
 
     /// `SWX_STATIC_MANIFESTS=0` forces real evaluation for every manifest (for debugging).

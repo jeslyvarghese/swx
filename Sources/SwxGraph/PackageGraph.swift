@@ -16,16 +16,28 @@ public struct GraphPackage: Sendable, Hashable {
     public let version: String?
     /// What the package is pinned to, for people: a version, a branch, or a short commit.
     public let pinned: String?
+    /// Where it comes from, for looking up its versions; `nil` for the root.
+    public let reference: PackageReference?
     /// The package directory: the root, a checkout, a registry download or a local path.
     public let path: String
     public let role: Role
 
-    public init(identity: String, manifest: Manifest, location: String, version: String?, pinned: String? = nil, path: String, role: Role) {
+    public init(
+        identity: String,
+        manifest: Manifest,
+        location: String,
+        version: String?,
+        pinned: String? = nil,
+        reference: PackageReference? = nil,
+        path: String,
+        role: Role
+    ) {
         self.identity = identity
         self.manifest = manifest
         self.location = location
         self.version = version
         self.pinned = pinned ?? version
+        self.reference = reference
         self.path = path
         self.role = role
     }

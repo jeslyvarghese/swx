@@ -126,7 +126,7 @@ let package = Package(
         .testTarget(name: "SwxCoreTests", dependencies: ["SwxCore"]),
         .testTarget(name: "SwxResolverTests", dependencies: ["SwxCore", "SwxResolver"]),
         .testTarget(name: "SwxManifestTests", dependencies: ["SwxCore", "SwxManifest"]),
-        .testTarget(name: "SwxGraphTests", dependencies: ["SwxManifest", "SwxGraph"]),
+        .testTarget(name: "SwxGraphTests", dependencies: ["SwxCore", "SwxManifest", "SwxGraph"]),
         .testTarget(
             name: "SwxWorkspaceTests",
             dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"],

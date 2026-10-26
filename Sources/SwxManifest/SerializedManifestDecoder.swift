@@ -219,7 +219,14 @@ enum SerializedManifestDecoder {
                 binaryLocation = .local(path: path)
             }
         }
-        return Manifest.Target(name: json[Key.name] as? String ?? "", kind: kind, dependencies: dependencies, pluginUsages: plugins, binaryLocation: binaryLocation)
+        return Manifest.Target(
+            name: json[Key.name] as? String ?? "",
+            kind: kind,
+            dependencies: dependencies,
+            pluginUsages: plugins,
+            binaryLocation: binaryLocation,
+            path: json[Key.path] as? String
+        )
     }
 
     /// `traits: [{name, condition: {traits: […]}}]` → trait name → condition traits, for conditional ones.

@@ -16,6 +16,8 @@ import SwxSystem
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// cas/                   shared compilation cache, when the toolchain supports it
+/// index/packages.json    the Swift Package Index's package list (`swx add <name>`)
+/// tests/<hash>           test targets that passed with exactly these inputs (`swx test --selective`)
 /// ```
 /// No other module knows this layout; everyone asks the store for paths.
 public struct Store: Sendable {
@@ -32,6 +34,8 @@ public struct Store: Sendable {
         case scripts
         case toolchains
         case cas
+        case index
+        case tests
         case temporary = "tmp"
     }
 
@@ -155,6 +159,18 @@ public struct Store: Sendable {
         let url = self.directory(.temporary).appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileSystem.createDirectory(url)
         return url
+    }
+
+    /// The Swift Package Index's list of package URLs, refreshed daily.
+    public var packageIndexPath: URL {
+        self.directory(.index).appendingPathComponent(Self.packageIndexFile)
+    }
+
+    private static let packageIndexFile = "packages.json"
+
+    /// A marker that a test target passed with inputs hashing to `key`.
+    public func testResultPath(key: String) -> URL {
+        self.directory(.tests).appendingPathComponent(key)
     }
 
     private func directory(_ directory: Directory) -> URL {

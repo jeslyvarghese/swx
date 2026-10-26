@@ -163,19 +163,23 @@ public struct Manifest: Sendable, Codable, Hashable {
         public var pluginUsages: [PluginUsage]
         /// Set for binary targets only.
         public var binaryLocation: BinaryLocation?
+        /// `path:`, relative to the package; `nil` for the conventional `Sources/<name>`, `Tests/<name>`, ….
+        public var path: String?
 
         public init(
             name: String,
             kind: Kind = .regular,
             dependencies: [TargetDependency],
             pluginUsages: [PluginUsage],
-            binaryLocation: BinaryLocation? = nil
+            binaryLocation: BinaryLocation? = nil,
+            path: String? = nil
         ) {
             self.name = name
             self.kind = kind
             self.dependencies = dependencies
             self.pluginUsages = pluginUsages
             self.binaryLocation = binaryLocation
+            self.path = path
         }
     }
 

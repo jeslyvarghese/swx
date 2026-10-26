@@ -15,6 +15,19 @@ public enum ResolveMode: Sendable {
     case update
 }
 
+/// Whether a resolve may change files, or only works out what it would do.
+enum ResolveEffect: Sendable {
+    case apply
+    case dryRun
+}
+
+/// `swx package resolve --check`: whether `Package.resolved` is what resolving would write.
+public enum LockfileStatus: Sendable, Equatable {
+    case upToDate
+    case missing
+    case stale(reason: String)
+}
+
 /// How a resolve finished.
 public enum ResolveOutcome: Sendable {
     /// Nothing to do: `Package.resolved` and checkouts already match.
@@ -370,8 +383,37 @@ public struct Workspace: Sendable {
         return try await self.fullResolve(mode: mode, root: root, previousPins: previousPins, previousState: state, catalog: .remote)
     }
 
+    /// Whether resolving would change `Package.resolved`, without writing or checking out anything.
+    ///
+    /// A matching `originHash` answers at once. Otherwise (the manifest changed, or the lockfile
+    /// predates origin hashes) a solve with nothing but the pins decides: SwiftPM rewrites the file
+    /// only when a pin changes, so does swx, and that's what "stale" means here.
+    public func checkLockfile() async throws -> LockfileStatus {
+        let root = try await self.rootContext()
+        guard let data = FileSystem.readIfPresent(root.layout.resolvedFile) else {
+            return .missing
+        }
+        let resolvedFile = try ResolvedFile.decode(data)
+        if resolvedFile.originHash == root.originHash {
+            return .upToDate
+        }
+
+        // The pins must still satisfy every requirement, and cover every dependency.
+        let state = FileSystem.readIfPresent(root.layout.workspaceState).flatMap(WorkspaceState.decodeIfCompatible) ?? WorkspaceState(dependencies: [:])
+        let catalog = VersionCatalog.pinned(Self.pinnedVersions(resolvedFile.pins, mirrors: root.mirrors))
+        do {
+            let report = try await self.fullResolve(mode: .respectPins, root: root, previousPins: resolvedFile.pins, previousState: state, catalog: catalog, effect: .dryRun)
+            guard report.changes.isEmpty else {
+                return .stale(reason: report.changes.map { "\($0.identity): \($0.old?.description ?? "unpinned") → \($0.new?.description ?? "removed")" }.joined(separator: ", "))
+            }
+            return .upToDate
+        } catch let miss as PinsNoLongerFit {
+            return .stale(reason: miss.reason)
+        }
+    }
+
     /// The registry client for this root's configuration, recording fingerprints where SwiftPM does.
-    private func registrySource(for root: RootContext) -> RegistrySource {
+    func registrySource(for root: RootContext) -> RegistrySource {
         RegistrySource(
             store: self.store,
             configuration: root.registries,
@@ -412,7 +454,8 @@ public struct Workspace: Sendable {
         root rootContext: RootContext,
         previousPins: [PackageIdentity: Pin],
         previousState: WorkspaceState,
-        catalog: VersionCatalog
+        catalog: VersionCatalog,
+        effect: ResolveEffect = .apply
     ) async throws -> ResolveReport {
         let layout = rootContext.layout
         let toolchain = try await Toolchain.detect(store: self.store)
@@ -485,6 +528,15 @@ public struct Workspace: Sendable {
         }
         pins += overrides.overridden.values.compactMap(\.pin)
 
+        // The lockfile records original locations, so it stays valid without the mirrors.
+        let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state, originalLocation: $0.originalLocation) }
+        let resolved = ResolvedFile(pins: Dictionary(lockedPins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
+
+        // A dry run stops here: nothing checked out, nothing written.
+        guard effect == .apply else {
+            return ResolveReport(outcome: .resolved, pins: pins, changes: Self.changes(from: previousPins, to: resolved.pins), materialized: 0)
+        }
+
         // Check out, then record.
         let fileSystemDependencies = overrides.overridden.values.compactMap(\.fileSystemDependency)
         let materialized = try await self.materialize(
@@ -502,15 +554,17 @@ public struct Workspace: Sendable {
                 layout: layout
             )
         )
-        // The lockfile records original locations, so it stays valid without the mirrors.
-        let lockedPins = pins.map { Pin(package: rootContext.mirrors.original($0.package), state: $0.state, originalLocation: $0.originalLocation) }
-        let resolved = ResolvedFile(pins: Dictionary(lockedPins.map { ($0.package.identity, $0) }, uniquingKeysWith: { $1 }), originHash: rootContext.originHash)
-        try Self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion), to: layout.resolvedFile)
+        // Like SwiftPM, rewrite Package.resolved only when a pin changed: a manifest edit that
+        // leaves every pin alone keeps the file, origin hash included.
+        let changes = Self.changes(from: previousPins, to: resolved.pins)
+        if !changes.isEmpty || !FileSystem.exists(layout.resolvedFile) {
+            try Self.writeResolvedFile(resolved, format: .forTools(root.parsedToolsVersion), to: layout.resolvedFile)
+        }
 
         return ResolveReport(
             outcome: .resolved,
             pins: pins,
-            changes: Self.changes(from: previousPins, to: resolved.pins),
+            changes: changes,
             materialized: materialized
         )
     }
