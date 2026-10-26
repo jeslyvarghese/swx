@@ -77,7 +77,6 @@ public enum ProcessRunner {
             process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
         }
 
-        // Drain both pipes concurrently so a chatty child can't deadlock on a full buffer.
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
@@ -85,44 +84,54 @@ public enum ProcessRunner {
         let inputPipe = input.map { _ in Pipe() }
         process.standardInput = inputPipe ?? FileHandle.nullDevice
 
-        let outputCollector = DataCollector()
-        let errorCollector = DataCollector()
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
-            outputCollector.append(handle.availableData)
-        }
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            errorCollector.append(handle.availableData)
-        }
+        // Drain both pipes from the start, each on its own thread, so a chatty child can't block on
+        // a full buffer. Each reader reads its pipe front to back, so output stays in order.
+        let output = Self.readToEnd(outputPipe.fileHandleForReading)
+        let errors = Self.readToEnd(errorPipe.fileHandleForReading)
 
         // Resume when the process exits.
-        let exitCode: Int32 = try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { finished in
-                continuation.resume(returning: finished.terminationStatus)
-            }
-            do {
-                try process.run()
-            } catch {
-                process.terminationHandler = nil
-                continuation.resume(throwing: error)
-                return
-            }
+        let exitCode: Int32
+        do {
+            exitCode = try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { finished in
+                    continuation.resume(returning: finished.terminationStatus)
+                }
+                do {
+                    try process.run()
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                    return
+                }
 
-            // Feed stdin from a background thread, then close it so the child sees EOF.
-            guard let input, let inputPipe else { return }
-            let writer = inputPipe.fileHandleForWriting
-            DispatchQueue.global().async {
-                try? writer.write(contentsOf: input)
-                try? writer.close()
+                // Feed stdin from a background thread, then close it so the child sees EOF.
+                guard let input, let inputPipe else { return }
+                let writer = inputPipe.fileHandleForWriting
+                DispatchQueue.global().async {
+                    try? writer.write(contentsOf: input)
+                    try? writer.close()
+                }
             }
+        } catch {
+            // Nothing will write to the pipes: close them so the readers finish.
+            try? outputPipe.fileHandleForWriting.close()
+            try? errorPipe.fileHandleForWriting.close()
+            _ = await (output.value, errors.value)
+            throw error
         }
 
-        // Collect what is left in the pipes after exit.
-        outputPipe.fileHandleForReading.readabilityHandler = nil
-        errorPipe.fileHandleForReading.readabilityHandler = nil
-        outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-        errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+        return ProcessResult(exitCode: exitCode, standardOutput: await output.value, standardError: await errors.value)
+    }
 
-        return ProcessResult(exitCode: exitCode, standardOutput: outputCollector.data, standardError: errorCollector.data)
+    /// Reads `handle` to end-of-file on a background thread.
+    private static func readToEnd(_ handle: FileHandle) -> Task<Data, Never> {
+        Task {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: handle.readDataToEndOfFile())
+                }
+            }
+        }
     }
 
     /// Runs a command with this process's stdin/stdout/stderr, returning its exit status.
@@ -152,21 +161,6 @@ public enum ProcessRunner {
         execvp(arguments[0], cArguments)
         perror("swx: exec \(arguments[0])")
         exit(EXIT_FAILURE)
-    }
-}
-
-/// Thread-safe byte accumulator for pipe readers.
-private final class DataCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage = Data()
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        self.lock.withLock { self.storage.append(chunk) }
-    }
-
-    var data: Data {
-        self.lock.withLock { self.storage }
     }
 }
 

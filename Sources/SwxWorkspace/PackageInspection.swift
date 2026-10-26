@@ -132,3 +132,59 @@ extension Workspace {
         return entries.render(format, scope: scope)
     }
 }
+
+// MARK: - Audit
+
+public typealias AuditFormat = SwxGraph.AuditFormat
+public typealias AuditReport = SwxGraph.AuditReport
+
+extension Workspace {
+    /// Known vulnerabilities in the pinned versions of every dependency, from OSV.dev (GitHub's
+    /// advisory database). Expects a resolved workspace.
+    public func audit() async throws -> AuditReport {
+        let graph = try await self.packageGraph()
+        let dependencies = graph.reachablePackages.filter { $0.role == .dependency }.sorted { $0.identity < $1.identity }
+
+        // Only released versions of git packages have names OSV knows.
+        var checkable: [(package: GraphPackage, name: String, version: String)] = []
+        var unchecked: [String] = []
+        for package in dependencies {
+            guard let version = package.version, let reference = package.reference, Self.isGitPackage(reference),
+                  let name = OSV.packageName(forURL: reference.kind.location) else {
+                unchecked.append(package.identity)
+                continue
+            }
+            checkable.append((package, name, version))
+        }
+
+        // One batch query for the ids, then each advisory's details once.
+        let ids = try await OSV.advisoryIDs(for: checkable.map { ($0.name, $0.version) })
+        let findings = try await withThrowingTaskGroup(of: (Int, [Advisory]).self) { group in
+            for (index, entry) in checkable.enumerated() where !ids[index].isEmpty {
+                group.addTask {
+                    var advisories: [Advisory] = []
+                    for id in ids[index] {
+                        advisories.append(try await OSV.advisory(id, packageName: entry.name))
+                    }
+                    return (index, advisories)
+                }
+            }
+            return try await group.reduce(into: [(Int, [Advisory])]()) { $0.append($1) }
+        }
+
+        return AuditReport(
+            findings: findings.sorted { $0.0 < $1.0 }.map { index, advisories in
+                AuditFinding(package: checkable[index].package.identity, version: checkable[index].version, advisories: advisories)
+            },
+            checked: checkable.count,
+            unchecked: unchecked
+        )
+    }
+
+    private static func isGitPackage(_ reference: PackageReference) -> Bool {
+        if case .remoteSourceControl = reference.kind {
+            return true
+        }
+        return false
+    }
+}

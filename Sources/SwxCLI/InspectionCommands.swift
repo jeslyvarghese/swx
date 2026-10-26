@@ -59,6 +59,30 @@ struct Outdated: AsyncParsableCommand {
     }
 }
 
+/// `swx audit`: known vulnerabilities in the pinned dependencies.
+struct Audit: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Check pinned dependencies for known vulnerabilities (GitHub's advisory database, through OSV.dev). Fails when any is found."
+    )
+
+    @OptionGroup var global: GlobalOptions
+
+    @Option(help: "text or json.")
+    var format: ReportFormat = .text
+
+    func run() async throws {
+        try await CommandSupport.prepareToolchain(for: self.global)
+        let workspace = self.global.makeWorkspace()
+        try await GraphSupport.resolve(workspace)
+
+        let report = try await CommandSupport.reportingErrors { try await workspace.audit() }
+        try GraphSupport.emit(report.render(self.format == .json ? .json : .text), to: nil)
+        if report.isVulnerable {
+            throw ExitCode.failure
+        }
+    }
+}
+
 /// `swx licenses`: the license of every dependency.
 struct Licenses: AsyncParsableCommand {
     static let configuration = CommandConfiguration(

@@ -28,7 +28,9 @@
             <li><a href="#install">Install</a></li>
             <li><a href="#dependencies">Dependencies</a></li>
             <li><a href="#graphs">Graphs</a></li>
+            <li><a href="#inspect">Inspecting</a></li>
             <li><a href="#build">Build, test, run</a></li>
+            <li><a href="#cache">Remote cache</a></li>
             <li><a href="#apple">Apple platforms</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
             <li><a href="#toolchains">Toolchains</a></li>
@@ -64,8 +66,19 @@ ln -s swx ~/.local/bin/swift-x   <span class="c"># optional: enables `swift x �
 
         <section id="dependencies">
             <h2>Dependencies</h2>
-            <p>A drop-in for <code>swift package resolve</code> and <code>update</code>, with the same flags. Any other <code>package</code> subcommand is forwarded to SwiftPM.</p>
+            <p>
+                <code>swx add</code> goes from a name to a resolved dependency in one step, like <code>uv add</code>.
+                It finds the package (a URL, <code>owner/repo</code>, or a name from the Swift Package Index), picks
+                its newest release and the right library, adds both to <code>Package.swift</code> through SwiftPM's
+                own editor, and resolves.
+            </p>
+<pre>swx add swift-argument-parser             <span class="c"># .package(…, from: "1.8.2") + ArgumentParser on your target</span>
+swx add swift-nio@2.60.0 --product NIOCore
+swx add apple/swift-log --target Server
+swx add https://github.com/me/kit --branch main</pre>
+            <p>Resolving is a drop-in for <code>swift package resolve</code> and <code>update</code>, with the same flags. Any other <code>package</code> subcommand is forwarded to SwiftPM.</p>
 <pre>swx package resolve
+swx package resolve --check     <span class="c"># exit 1 if resolving would change Package.resolved (for CI)</span>
 swx package update
 swx package show-dependencies   <span class="c"># SwiftPM's output, without SwiftPM (see Graphs)</span>
 swx package dump-package        <span class="c"># forwarded to `swift package`</span></pre>
@@ -110,6 +123,23 @@ swx graph -o graph.svg                     <span class="c"># drawn by Graphviz (
             </p>
         </section>
 
+        <section id="inspect">
+            <h2>Inspecting</h2>
+            <p>Questions about the resolved graph, each answered from local data except where noted.</p>
+<pre>swx why swift-collections   <span class="c"># who depends on it, up to the root</span>
+swx outdated                <span class="c"># pinned, wanted (what your requirements allow) and latest versions</span>
+swx audit                   <span class="c"># known vulnerabilities (GitHub's advisory database, via OSV.dev); exit 1 if any</span>
+swx licenses                <span class="c"># each dependency's license (SPDX); --format csv for compliance tools</span>
+swx inspect imports         <span class="c"># undeclared imports (exit 1) and unused dependencies</span></pre>
+            <p>
+                <code>swx inspect imports</code> catches the bug that works locally and fails in a clean build: a
+                target importing a module it doesn't declare, which only links because something else pulled it in.
+                It parses every target's sources, in every <code>#if</code> branch, and suggests the product to
+                declare. <code>outdated</code> and <code>audit</code> list versions and advisories over the
+                network; all of them take <code>--format json</code>.
+            </p>
+        </section>
+
         <section id="build">
             <h2>Build, test, run</h2>
             <p>swx resolves first, then hands over to SwiftPM with resolution disabled.</p>
@@ -121,6 +151,38 @@ swx run MyTool --flag</pre>
                 compiler's content-addressed cache (with SwiftPM's native build system): a second project
                 that uses swift-collections built in 1.7 s instead of 6.4 s.
             </p>
+            <p>
+                <code>swx test --selective</code> runs only the test targets whose inputs changed since they last
+                passed: their sources and those of the targets they depend on, the manifest, the pins, path
+                dependencies, the toolchain and the test arguments. When nothing changed, nothing runs. Passing
+                results are kept in the store, so the remote cache shares them between machines.
+            </p>
+        </section>
+
+        <section id="cache">
+            <h2>Remote cache</h2>
+            <p>
+                <code>swx cache push</code> and <code>pull</code> share the store with other machines: the source
+                tree and manifests of every pinned commit, the binary artifacts the manifests declare, and the
+                results of <code>swx test --selective</code>. After a pull, resolving restores every checkout
+                without running git.
+            </p>
+<pre><span class="c"># CI: restore, resolve offline, test what changed, share the results</span>
+export SWX_REMOTE_CACHE=s3://my-bucket/swx
+swx cache pull
+swx package resolve
+swx test --selective
+swx cache push</pre>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Remote</th><th>Credentials</th></tr></thead>
+                    <tbody>
+                        <tr><td>a directory or <code>file:///…</code></td><td>none (a mounted drive, or a folder CI caches)</td></tr>
+                        <tr><td><code>https://host/prefix</code></td><td>GET, HEAD and PUT; <code>SWX_REMOTE_CACHE_TOKEN</code> as a bearer token</td></tr>
+                        <tr><td><code>s3://bucket/prefix</code></td><td><code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>, <code>AWS_REGION</code>; <code>SWX_S3_ENDPOINT</code> for R2 or MinIO</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </section>
 
         <section id="apple">
@@ -192,6 +254,7 @@ import ArgumentParser</pre>
                         <tr><td><code>SWX_TRACE=1</code></td><td>A timestamped timeline of every subprocess.</td></tr>
                         <tr><td><code>SWX_STATIC_MANIFESTS=0</code></td><td>Always evaluate manifests with the compiler.</td></tr>
                         <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>
+                        <tr><td><code>SWX_REMOTE_CACHE</code></td><td>The remote cache for <code>swx cache push|pull</code>.</td></tr>
                         <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache; <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
                     </tbody>
                 </table>

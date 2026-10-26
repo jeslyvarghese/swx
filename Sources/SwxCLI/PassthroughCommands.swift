@@ -27,6 +27,12 @@ enum Passthrough {
 
     /// Resolves (unless told not to), then replaces this process with `swift <command> …`.
     static func run(_ command: [String], arguments: [String], resolution: Resolution) async throws -> Never {
+        ProcessRunner.exec(try await Self.prepare(command, arguments: arguments, resolution: resolution))
+    }
+
+    /// Activates the toolchain and resolves (unless told not to); returns the `swift <command> …`
+    /// invocation to run.
+    static func prepare(_ command: [String], arguments: [String], resolution: Resolution) async throws -> [String] {
         // `.swift-version` picks the toolchain for both swx and the SwiftPM it hands over to.
         let packageURL = FileSystemPaths.absolute(Self.packagePath(in: arguments))
         try await CommandSupport.reportingErrors {
@@ -51,7 +57,7 @@ enum Passthrough {
                 packageDirectory: FileSystemPaths.absolute(Self.packagePath(in: arguments))
             )
         }
-        ProcessRunner.exec(invocation + arguments)
+        return invocation + arguments
     }
 
     /// Honours `--package-path` among the passed-through arguments.
@@ -144,12 +150,48 @@ struct Test: AsyncParsableCommand {
     @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift test`, plus --platform/--destination/--device.")
     var arguments: [String] = []
 
+    private static let selectiveFlag = "--selective"
+    private static let filterOption = "--filter"
+
     func run() async throws {
         var arguments = self.arguments
         if let apple = AppleArguments.extract(from: &arguments) {
             try await apple.build(action: .test, extraArguments: arguments)
         }
-        try await Passthrough.run(["test"], arguments: arguments, resolution: .resolveFirst)
+        guard let index = arguments.firstIndex(of: Self.selectiveFlag) else {
+            try await Passthrough.run(["test"], arguments: arguments, resolution: .resolveFirst)
+        }
+        arguments.remove(at: index)
+        try await Self.runSelectively(arguments)
+    }
+
+    /// Runs only test targets whose inputs changed since they last passed, then records the passes.
+    private static func runSelectively(_ arguments: [String]) async throws {
+        let invocation = try await Passthrough.prepare(["test"], arguments: arguments, resolution: .resolveFirst)
+        let workspace = Workspace(options: WorkspaceOptions(
+            root: .package(FileSystemPaths.absolute(Passthrough.packagePath(in: arguments))),
+            cacheDirectory: nil,
+            maximumConcurrency: ResolverDefaults.concurrency,
+            verbosity: .normal,
+            swiftPM: Passthrough.swiftPMSettings(in: arguments)
+        ))
+        let plan = try await CommandSupport.reportingErrors { try await workspace.selectiveTestPlan(arguments: arguments) }
+
+        // Nothing changed since everything passed: nothing to build or run.
+        guard !plan.run.isEmpty else {
+            CommandSupport.status("\(plan.skipped.count) test targets unchanged since they passed; nothing to run")
+            return
+        }
+        if !plan.skipped.isEmpty {
+            CommandSupport.status("running \(plan.run.joined(separator: ", ")); unchanged since they passed: \(plan.skipped.joined(separator: ", "))")
+        }
+
+        let filter = plan.filter.map { [Self.filterOption, $0] } ?? []
+        let status = try await ProcessRunner.runStreaming(invocation + filter)
+        guard status == 0 else {
+            throw ExitCode(status)
+        }
+        try CommandSupport.reportingErrors { try workspace.recordPassed(plan) }
     }
 }
 

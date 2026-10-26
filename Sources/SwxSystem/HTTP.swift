@@ -6,6 +6,10 @@ import FoundationNetworking
 
 public struct HTTPError: Error, CustomStringConvertible {
     public let description: String
+
+    public init(description: String) {
+        self.description = description
+    }
 }
 
 /// A response whose status the caller interprets (registries answer 404 for unknown packages).
@@ -96,6 +100,72 @@ public enum HTTP {
     }
 
     private static let postMethod = "POST"
+    private static let putMethod = "PUT"
+    private static let headMethod = "HEAD"
+
+    /// The status of a HEAD request (existence checks); retries only server and network errors.
+    public static func head(_ url: URL, headers: [String: String]) async throws -> Int {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            request.httpMethod = Self.headMethod
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (_, response) = try await Self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            return http.statusCode
+        }
+    }
+
+    /// Uploads a file's bytes; the status is returned rather than checked.
+    public static func put(_ url: URL, file: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            request.httpMethod = Self.putMethod
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (data, response) = try await Self.session.upload(for: request, fromFile: file)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            return HTTPResponse(status: http.statusCode, body: data, headers: [:])
+        }
+    }
+
+    /// Downloads `url` to `destination` with request headers; returns the status, and leaves
+    /// `destination` alone unless it is a success.
+    public static func download(_ url: URL, headers: [String: String], to destination: URL) async throws -> Int {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (temporary, response) = try await Self.session.download(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            guard Self.successCodes.contains(http.statusCode) else {
+                try? FileManager.default.removeItem(at: temporary)
+                return http.statusCode
+            }
+            try FileSystem.createDirectory(destination.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: temporary, to: destination)
+            return http.statusCode
+        }
+    }
 
     // MARK: Helpers
 

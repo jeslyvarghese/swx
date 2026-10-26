@@ -48,6 +48,9 @@
                 <li><b>Familiar:</b> SwiftPM's commands and flags; anything swx doesn't handle is forwarded to <code>swift package</code>.</li>
                 <li><b>Xcode-aware:</b> prepares <code>SourcePackages</code> so <code>xcodebuild</code> builds offline.</li>
                 <li><b>Apple platforms:</b> build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices.</li>
+                <li><b>One-step adds:</b> <code>swx add swift-argument-parser</code> finds the package, picks its newest release and library, edits <code>Package.swift</code> and resolves.</li>
+                <li><b>Inspection:</b> <code>why</code>, <code>outdated</code>, <code>audit</code> for known vulnerabilities, <code>licenses</code>, and undeclared imports.</li>
+                <li><b>Fast CI:</b> selective testing, and a remote cache on S3, HTTP or a directory that restores checkouts without git.</li>
                 <li><b>Dependency graphs:</b> <code>swx graph</code> as a tree, Graphviz, Mermaid or JSON, with each edge's conditions.</li>
                 <li><b>Toolchains:</b> installs swift.org releases and snapshots, and honours <code>.swift-version</code>.</li>
                 <li><b>Tools and scripts:</b> runs package executables like <code>uvx</code>, and single-file scripts with dependencies.</li>

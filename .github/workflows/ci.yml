@@ -26,6 +26,10 @@ jobs:
         run: |
           brew install graphviz
           Scripts/compare-graph.sh .build/release/swx
+      - name: Lockfile checks against SwiftPM
+        run: Scripts/compare-lock-check.sh .build/release/swx
+      - name: Remote cache round trips
+        run: Scripts/check-remote-cache.sh .build/release/swx
       - name: Lockfile reuse and submodules against SwiftPM
         run: |
           Scripts/compare-pin-reuse.sh .build/release/swx

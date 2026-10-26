@@ -13,6 +13,13 @@ public struct PackageIndex: Sendable {
     private static let maximumAge: TimeInterval = 24 * 60 * 60
     private static let httpOK = 200
 
+    private enum Header {
+        static let accept = "Accept"
+        static let gitHubJSON = "application/vnd.github+json"
+        static let authorization = "Authorization"
+        static let bearer = "Bearer "
+    }
+
     private let store: Store
 
     public init(store: Store) {
@@ -80,9 +87,9 @@ public struct PackageIndex: Sendable {
         guard let api = URL(string: Self.gitHubRepositories + path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) else { return nil }
 
         // A token (CI usually has one) lifts GitHub's anonymous rate limit.
-        var headers = ["Accept": "application/vnd.github+json"]
+        var headers = [Header.accept: Header.gitHubJSON]
         if let token = ProcessInfo.processInfo.environment[Self.tokenVariable], !token.isEmpty {
-            headers["Authorization"] = "Bearer \(token)"
+            headers[Header.authorization] = Header.bearer + token
         }
         guard let response = try? await HTTP.get(api, headers: headers), response.status == Self.httpOK else { return nil }
         return try? JSONDecoder().decode(RepositoryInfo.self, from: response.body)

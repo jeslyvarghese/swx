@@ -98,6 +98,7 @@ let package = Package(
             name: "SwxSource",
             dependencies: [
                 "SwxCore", "SwxStore", "SwxSystem",
+                .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "X509", package: "swift-certificates"),
                 .product(name: "SwiftASN1", package: "swift-asn1"),
             ]
@@ -136,6 +137,6 @@ let package = Package(
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
         .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
-        .testTarget(name: "SwxSourceTests", dependencies: ["SwxCore", "SwxSource"]),
+        .testTarget(name: "SwxSourceTests", dependencies: ["SwxCore", "SwxSource", "SwxStore"]),
     ]
 )
