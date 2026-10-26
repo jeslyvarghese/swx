@@ -205,3 +205,25 @@ pre .c { color: var(--code-muted); }
 .site-footer { border-top: 1px solid var(--rule); padding-block: 2rem 3rem; color: var(--muted); font-size: 0.9rem; }
 .site-footer .wrap { display: flex; gap: 1rem 2rem; flex-wrap: wrap; justify-content: space-between; }
 .site-footer a { color: var(--muted); }
+
+/* Feature and principle lists: a bold label, then a short clause */
+
+.features { padding-left: 1.2rem; margin: 0 0 1.5rem; max-width: 46rem; display: grid; gap: 0.45rem; }
+.features li::marker { color: var(--accent); }
+
+/* Example tabs */
+
+.tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--rule); margin-bottom: 1rem; }
+.tabs button {
+    font: 600 0.92rem/1 var(--sans);
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 0.7rem 0.9rem;
+    cursor: pointer;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+#community h2 + .section-lede { margin-bottom: 2.5rem; }

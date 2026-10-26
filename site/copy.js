@@ -16,3 +16,18 @@ for (const button of document.querySelectorAll("[data-copy]")) {
         setTimeout(() => { button.textContent = label; }, confirmationDelay);
     });
 }
+
+// Tabs: show the panel named by the selected tab's aria-controls, hide its siblings.
+for (const list of document.querySelectorAll("[role=tablist]")) {
+    const tabs = [...list.querySelectorAll("[role=tab]")];
+
+    for (const tab of tabs) {
+        tab.addEventListener("click", () => {
+            for (const other of tabs) {
+                const selected = other === tab;
+                other.setAttribute("aria-selected", String(selected));
+                document.getElementById(other.getAttribute("aria-controls")).hidden = !selected;
+            }
+        });
+    }
+}

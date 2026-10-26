@@ -14,8 +14,8 @@
     <div class="wrap">
         <a class="brand" href="./">swx<span>_</span></a>
         <nav class="site-nav">
-            <a href="./#speed">Benchmarks</a>
-            <a href="./#compatibility">Compatibility</a>
+            <a href="./#philosophy">Philosophy</a>
+            <a href="./#speed">Performance</a>
             <a href="guide.html" aria-current="page">Guide</a>
             <a href="https://github.com/jeslyvarghese/swx">GitHub</a>
         </nav>
@@ -34,6 +34,7 @@
             <li><a href="#tools">Tools</a></li>
             <li><a href="#scripts">Scripts</a></li>
             <li><a href="#environment">Environment</a></li>
+            <li><a href="#compatibility">Compatibility</a></li>
             <li><a href="#verification">Verification</a></li>
         </ol>
     </nav>
@@ -161,12 +162,31 @@ import ArgumentParser</pre>
             </div>
         </section>
 
+        <section id="compatibility">
+            <h2>Compatibility</h2>
+            <p>Each of these is checked byte for byte against SwiftPM or Xcode:</p>
+            <ul class="features">
+                <li><b>Package.resolved:</b> v2 and v3 written, v1 read; <code>originHash</code> matches SwiftPM's and Xcode's.</li>
+                <li><b>Workspace state:</b> <code>workspace-state.json</code> v7, including path dependencies and binary artifacts. Entries swx doesn't manage (edited packages, prebuilts) are kept untouched.</li>
+                <li><b>Dependencies:</b> branch, revision, path and local git dependencies; SwiftPM's pruning, traits, tag-to-version rules and pre-release ranges.</li>
+                <li><b>Mirrors:</b> <code>mirrors.json</code> from the package and <code>~/.swiftpm</code>; the original URL is what the lockfile records.</li>
+                <li><b>Submodules and Git LFS:</b> checked out as SwiftPM checks them out (LFS needs <code>git-lfs</code>, as SwiftPM does).</li>
+                <li><b>Registries:</b> <code>registries.json</code>, SwiftPM's credential lookup (environment, Keychain, <code>.netrc</code>), checksums and trust-on-first-use fingerprints, SE-0391 signatures, and <code>--replace-scm-with-registry</code>.</li>
+                <li><b>Tag fingerprints:</b> the commit behind each tag is recorded in SwiftPM's store, and a tag that moves is refused.</li>
+                <li><b>Binary targets:</b> XCFrameworks, artifact bundles and <code>.artifactbundleindex</code>, downloaded and unzipped once per machine.</li>
+                <li><b>Manifests:</b> 0 disagreements with <code>dump-package</code> over a 364-manifest corpus.</li>
+                <li><b>Xcode:</b> projects, workspaces and root package folders, with the registries and mirrors Xcode keeps in <code>xcshareddata</code>.</li>
+                <li><b>Mixed use:</b> <code>swift package update</code> works on top of swx checkouts, and swift-syntax prebuilts still apply.</li>
+            </ul>
+            <p>Multi-root workspaces are not supported.</p>
+        </section>
+
         <section id="verification">
             <h2>Verification</h2>
             <p>
                 Compatibility is checked differentially: each script runs SwiftPM or Xcode and swx on the same
                 input and compares what they write. The full list is in the
-                <a href="https://github.com/jeslyvarghese/swx#verification">README</a>; for example:
+                <a href="https://github.com/jeslyvarghese/swx/blob/main/CONTRIBUTING.md#verification">contributing guide</a>; for example:
             </p>
 <pre>Scripts/compare-with-swiftpm.sh &lt;package-dir&gt;   <span class="c"># Package.resolved, workspace-state.json, checkouts</span>
 Scripts/compare-registry-signing.sh             <span class="c"># signed registry releases: trusted, untrusted, tampered</span>
