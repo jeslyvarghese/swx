@@ -21,10 +21,10 @@ It also covers the jobs of several other tools:
 ## Install
 
 ```sh
-curl -fsSL https://jeslyvarghese.github.io/swx/install.sh | sh
+curl -fsSL https://swx.quadratic.xyz/install.sh | sh
 ```
 
-The script installs the release for your OS and CPU (macOS universal, or a static Linux binary for x86_64 or aarch64) into `~/.local/bin`, after checking it against the release's `SHA256SUMS`. Documentation: **https://jeslyvarghese.github.io/swx/**
+The script installs the release for your OS and CPU (macOS universal, or a static Linux binary for x86_64 or aarch64) into `~/.local/bin`, after checking it against the release's `SHA256SUMS`. Documentation: **https://swx.quadratic.xyz/**
 
 From source:
 

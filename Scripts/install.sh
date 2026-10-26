@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the latest swx release (or SWX_VERSION) for this OS and CPU.
 #
-#   curl -fsSL https://jeslyvarghese.github.io/swx/install.sh | sh
+#   curl -fsSL https://swx.quadratic.xyz/install.sh | sh
 #
 # Environment:
 #   SWX_VERSION       a release tag such as v0.1.0 (default: the latest release)
