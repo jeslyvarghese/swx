@@ -106,13 +106,39 @@ struct StaticManifestParserTests {
         let target = try #require(manifest.targets.first)
         #expect(target.dependencies == [
             .byName(name: "Helpers", condition: nil),
-            .product(name: "A", package: "a", condition: Manifest.Condition(traits: nil)),
+            .product(name: "A", package: "a", condition: Manifest.Condition(platforms: ["linux"], traits: nil)),
             .product(name: "B", package: "a", condition: Manifest.Condition(traits: ["Fast"])),
             .target(name: "Core", condition: nil),
         ])
         #expect(target.pluginUsages == [Manifest.PluginUsage(name: "Gen", package: "a")])
         #expect(manifest.products == [Manifest.Product(name: "Lib", targets: ["Lib"])])
         #expect(manifest.traits.map(\.name) == ["Fast", "default"])
+    }
+
+    /// Platforms are spelled as PackageDescription's `Platform.name`, as `dump-package` prints them.
+    @Test func readsPlatformConditions() throws {
+        let manifest = try #require(parse("""
+        let package = Package(name: "P", targets: [
+            .target(name: "Lib", dependencies: [
+                .target(name: "A", condition: .when(platforms: [.macOS, Platform.iOS, .visionOS])),
+                .target(name: "B", condition: .when(platforms: [.custom("freertos")], traits: ["Fast"])),
+                .target(name: "C", condition: .when(platforms: [])),
+            ]),
+        ])
+        """))
+        #expect(manifest.targets[0].dependencies.map(\.condition) == [
+            Manifest.Condition(platforms: ["macos", "ios", "visionos"], traits: nil),
+            Manifest.Condition(platforms: ["freertos"], traits: ["Fast"]),
+            Manifest.Condition(platforms: nil, traits: nil),
+        ])
+    }
+
+    @Test func declinesComputedPlatforms() {
+        #expect(parse("""
+        let package = Package(name: "P", targets: [
+            .target(name: "Lib", dependencies: [.target(name: "A", condition: .when(platforms: hostPlatforms()))]),
+        ])
+        """) == nil)
     }
 
     @Test func followsConstantsAndConcatenation() throws {

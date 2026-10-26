@@ -18,6 +18,8 @@ public enum StaticManifestParser {
         static let foundation = "Foundation"
         static let packageDescription = "PackageDescription"
         static let defaultTrait = "default"
+        static let platform = "Platform"
+        static let customPlatform = "custom"
     }
 
     private enum Label {
@@ -35,6 +37,7 @@ public enum StaticManifestParser {
         static let revision = "revision"
         static let package = "package"
         static let condition = "condition"
+        static let platforms = "platforms"
         static let plugins = "plugins"
         static let enabledTraits = "enabledTraits"
         static let checksum = "checksum"
@@ -349,7 +352,7 @@ public enum StaticManifestParser {
             guard let (member, arguments) = self.call(expression), member == Label.package else { return nil }
             let explicitName = arguments[Label.name].flatMap { self.string($0) }
             if arguments[Label.name] != nil && explicitName == nil { return nil }
-            guard let traits = self.dependencyTraits(arguments[Label.traits]) else { return nil }
+            guard let (traits, traitConditions) = self.dependencyTraits(arguments[Label.traits]) else { return nil }
 
             // Local path.
             if let pathExpression = arguments[Label.path] {
@@ -359,7 +362,8 @@ public enum StaticManifestParser {
                     explicitName: explicitName,
                     location: .local(path: resolved),
                     requirement: .none,
-                    traits: traits
+                    traits: traits,
+                    traitConditions: traitConditions
                 )
             }
 
@@ -367,7 +371,7 @@ public enum StaticManifestParser {
             if let idExpression = arguments[Label.id] {
                 guard let id = self.string(idExpression), let requirement = self.requirement(arguments) else { return nil }
                 // Registry identities keep their spelling (`dump-package` does too).
-                return Manifest.Dependency(identity: id, explicitName: nil, location: .registry(identity: id), requirement: requirement, traits: traits)
+                return Manifest.Dependency(identity: id, explicitName: nil, location: .registry(identity: id), requirement: requirement, traits: traits, traitConditions: traitConditions)
             }
 
             // Source control.
@@ -386,7 +390,8 @@ public enum StaticManifestParser {
                 explicitName: explicitName,
                 location: location,
                 requirement: requirement,
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
         }
 
@@ -457,11 +462,14 @@ public enum StaticManifestParser {
         }
 
         /// `traits:` on a dependency; absent means the package's defaults.
-        private func dependencyTraits(_ expression: ExprSyntax?) -> [String]? {
-            guard let expression else { return [Name.defaultTrait] }
+        /// A dependency's `traits:`: names (sorted, `default` when absent), plus the conditions of
+        /// `.trait(name:condition: .when(traits:))` entries.
+        private func dependencyTraits(_ expression: ExprSyntax?) -> (names: [String], conditions: [String: [String]])? {
+            guard let expression else { return ([Name.defaultTrait], [:]) }
             guard let elements = self.array(expression) else { return nil }
 
             var names: [String] = []
+            var conditions: [String: [String]] = [:]
             for element in elements {
                 if let name = self.string(element) {
                     names.append(name)
@@ -474,8 +482,14 @@ public enum StaticManifestParser {
                 guard let (member, arguments) = self.call(element), member == "trait",
                       let name = arguments[Label.name].flatMap({ self.string($0) }) else { return nil }
                 names.append(name)
+
+                // Only trait conditions exist for dependency traits; anything else is not understood.
+                guard let conditionExpression = arguments[Label.condition] else { continue }
+                guard let condition = self.condition(conditionExpression), condition.platforms == nil,
+                      let traits = condition.traits else { return nil }
+                conditions[name] = traits
             }
-            return names.sorted()
+            return (names.sorted(), conditions)
         }
 
         // MARK: Products and targets
@@ -611,14 +625,37 @@ public enum StaticManifestParser {
             }
         }
 
-        /// `.when(platforms: […], traits: […])`; only the traits matter for resolution.
+        /// `.when(platforms: […], traits: […])`; traits matter for resolution, platforms label graphs.
         private func condition(_ expression: ExprSyntax) -> Manifest.Condition? {
             guard let (member, arguments) = self.call(expression), member == "when" else { return nil }
+
+            // Platforms, spelled as PackageDescription names them (`.macOS` is "macos").
+            var platforms: [String]?
+            if let platformsExpression = arguments[Label.platforms] {
+                guard let names = self.list(platformsExpression, self.platformName) else { return nil }
+                platforms = names.isEmpty ? nil : names
+            }
+
             guard let traitsExpression = arguments[Label.traits] else {
-                return Manifest.Condition(traits: nil)
+                return Manifest.Condition(platforms: platforms, traits: nil)
             }
             guard let traits = self.list(traitsExpression, self.string) else { return nil }
-            return Manifest.Condition(traits: traits.sorted())
+            return Manifest.Condition(platforms: platforms, traits: traits.sorted())
+        }
+
+        /// `.linux`, `.macOS`, `.custom("name")` → PackageDescription's `Platform.name`.
+        private func platformName(_ expression: ExprSyntax) -> String? {
+            // `.linux` or `Platform.linux`.
+            if let member = expression.as(MemberAccessExprSyntax.self) {
+                let base = member.base.flatMap { $0.as(DeclReferenceExprSyntax.self)?.baseName.text }
+                guard member.base == nil || base == Name.platform else { return nil }
+                return member.declName.baseName.text.lowercased()
+            }
+
+            // `.custom("name")` keeps the name as written.
+            guard let (member, arguments) = self.call(expression), member == Name.customPlatform,
+                  let name = arguments.unlabeled.first.flatMap({ self.string($0) }) else { return nil }
+            return name
         }
 
         private func pluginUsage(_ expression: ExprSyntax) -> Manifest.PluginUsage? {

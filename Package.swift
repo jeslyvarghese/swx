@@ -37,7 +37,13 @@ let package = Package(
         // Orchestration: resolved file, workspace state, resolution driver.
         .target(
             name: "SwxWorkspace",
-            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain", "SwxBuild", "SwxApple", "SwxDevice"]
+            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxGraph", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain", "SwxBuild", "SwxApple", "SwxDevice"]
+        ),
+
+        // Package and target graphs, and their printers (pure: `show-dependencies`, `swx graph`).
+        .target(
+            name: "SwxGraph",
+            dependencies: ["SwxCore", "SwxManifest"]
         ),
 
         // Build drivers: SwiftPM for the host, xcodebuild for Apple platforms (both run swift-build).
@@ -120,6 +126,7 @@ let package = Package(
         .testTarget(name: "SwxCoreTests", dependencies: ["SwxCore"]),
         .testTarget(name: "SwxResolverTests", dependencies: ["SwxCore", "SwxResolver"]),
         .testTarget(name: "SwxManifestTests", dependencies: ["SwxCore", "SwxManifest"]),
+        .testTarget(name: "SwxGraphTests", dependencies: ["SwxManifest", "SwxGraph"]),
         .testTarget(
             name: "SwxWorkspaceTests",
             dependencies: ["SwxCore", "SwxSource", "SwxWorkspace"],

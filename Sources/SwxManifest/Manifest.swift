@@ -58,13 +58,32 @@ public struct Manifest: Sendable, Codable, Hashable {
         public var requirement: Requirement
         /// Traits this manifest enables on the dependency.
         public var traits: [String]
+        /// `.trait(name:condition: .when(traits:))`: trait name → the declaring package's traits that switch it on.
+        public var traitConditions: [String: [String]]
 
-        public init(identity: String, explicitName: String?, location: Location, requirement: Requirement, traits: [String]) {
+        public init(
+            identity: String,
+            explicitName: String?,
+            location: Location,
+            requirement: Requirement,
+            traits: [String],
+            traitConditions: [String: [String]] = [:]
+        ) {
             self.identity = identity
             self.explicitName = explicitName
             self.location = location
             self.requirement = requirement
             self.traits = traits
+            self.traitConditions = traitConditions
+        }
+
+        /// The traits asked of this dependency, given the declaring package's enabled traits:
+        /// a conditional trait counts when any of its condition's traits is enabled (SwiftPM's `isSatisfied`).
+        public func requestedTraits(enabledInParent parentTraits: Set<String>) -> [String] {
+            self.traits.filter { name in
+                guard let condition = self.traitConditions[name] else { return true }
+                return !parentTraits.isDisjoint(with: condition)
+            }
         }
 
         /// The name target dependencies use to refer to this package (`nameForModuleDependencyResolutionOnly`).
@@ -83,10 +102,14 @@ public struct Manifest: Sendable, Codable, Hashable {
         }
     }
 
+    /// `.when(platforms:traits:)` on a target dependency.
     public struct Condition: Sendable, Codable, Hashable {
+        /// PackageDescription's platform names (`macos`, `linux`, …) in declaration order; `nil` when absent or empty.
+        public var platforms: [String]?
         public var traits: [String]?
 
-        public init(traits: [String]?) {
+        public init(platforms: [String]? = nil, traits: [String]?) {
+            self.platforms = platforms
             self.traits = traits
         }
     }

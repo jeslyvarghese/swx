@@ -1,0 +1,3 @@
+import Local
+
+print(greeting)

@@ -22,6 +22,10 @@ jobs:
           cp Tests/Fixtures/sample/Package.swift /tmp/fixture/
           echo 'print("hi")' > /tmp/fixture/Sources/App/main.swift
           Scripts/compare-with-swiftpm.sh /tmp/fixture .build/release/swx
+      - name: Dependency graphs against SwiftPM (and Graphviz)
+        run: |
+          brew install graphviz
+          Scripts/compare-graph.sh .build/release/swx
       - name: Lockfile reuse and submodules against SwiftPM
         run: |
           Scripts/compare-pin-reuse.sh .build/release/swx

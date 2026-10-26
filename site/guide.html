@@ -27,6 +27,7 @@
         <ol>
             <li><a href="#install">Install</a></li>
             <li><a href="#dependencies">Dependencies</a></li>
+            <li><a href="#graphs">Graphs</a></li>
             <li><a href="#build">Build, test, run</a></li>
             <li><a href="#apple">Apple platforms</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
@@ -66,11 +67,46 @@ ln -s swx ~/.local/bin/swift-x   <span class="c"># optional: enables `swift x �
             <p>A drop-in for <code>swift package resolve</code> and <code>update</code>, with the same flags. Any other <code>package</code> subcommand is forwarded to SwiftPM.</p>
 <pre>swx package resolve
 swx package update
-swx package show-dependencies   <span class="c"># forwarded to `swift package`</span></pre>
+swx package show-dependencies   <span class="c"># SwiftPM's output, without SwiftPM (see Graphs)</span>
+swx package dump-package        <span class="c"># forwarded to `swift package`</span></pre>
             <p>
                 The result is what SwiftPM would have written: the same <code>Package.resolved</code>, the
                 same <code>.build/checkouts</code> and <code>.build/workspace-state.json</code>. A later
                 <code>swift build</code> finds everything resolved and does no network work.
+            </p>
+        </section>
+
+        <section id="graphs">
+            <h2>Graphs</h2>
+            <p>
+                <code>swx graph</code> shows what your targets depend on, like <code>tuist graph</code>: your
+                targets, the products they use from each package with its pinned version, and the platform and
+                trait conditions on each edge. It follows SwiftPM's rules, so dependencies switched off by traits
+                don't appear.
+            </p>
+<pre>$ swx graph
+App (executable)
+├── AsyncAlgorithms · swift-async-algorithms 1.1.7 (library product)
+├── Logging · swift-log main (library product) [linux, macos]
+└── Local · local (library product)
+AppTests (test)
+└── App (executable) (*)</pre>
+<pre>swx graph --level package                  <span class="c"># one node per package</span>
+swx graph --external targets --focus App   <span class="c"># all App reaches, down to dependencies' targets</span>
+swx graph --skip-tests --external none     <span class="c"># only this package's own targets</span>
+swx graph --format mermaid                 <span class="c"># renders in GitHub comments and READMEs</span>
+swx graph --format json                    <span class="c"># packages, nodes and edges, for tools</span>
+swx graph -o graph.svg                     <span class="c"># drawn by Graphviz (.svg, .png, .pdf)</span></pre>
+            <p>
+                <code>(*)</code> marks a node whose dependencies are already shown above. Image output needs
+                Graphviz's <code>dot</code>; <code>--format dot</code> prints the same graph as text.
+            </p>
+            <p>
+                <code>swx package show-dependencies</code> prints exactly what SwiftPM prints, in all four of its
+                formats (<code>text</code>, <code>dot</code>, <code>json</code>, <code>flatlist</code>), without
+                starting SwiftPM: 17 ms instead of 359 ms for Vapor's 32 packages. Two cases go to SwiftPM itself: graphs with swift-syntax, which SwiftPM may swap
+                for prebuilt libraries, and edited packages. SwiftPM lists two or more traits of a package in a
+                different order on every run; swx sorts them.
             </p>
         </section>
 

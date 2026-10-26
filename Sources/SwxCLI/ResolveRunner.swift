@@ -42,6 +42,13 @@ enum ResolveRunner {
         }
     }
 
+    /// For commands whose stdout is data (graphs, JSON): pin changes go to stderr.
+    static func reportChanges(_ report: ResolveReport) {
+        for change in report.changes {
+            FileHandle.standardError.write(Data((Self.describe(change) + "\n").utf8))
+        }
+    }
+
     private static func describe(_ change: PinChange) -> String {
         switch (change.old, change.new) {
         case (nil, let new?):

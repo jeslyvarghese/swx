@@ -217,7 +217,7 @@ actor FactProvider {
             var declarations: [DependencyDeclaration] = []
             for dependency in required {
                 let declaration = self.mirrors.effective(dependency.declaration)
-                self.noteTraits(dependency.traits, for: declaration.package.identity)
+                self.noteTraits(dependency.requestedTraits(enabledInParent: manifest.expand(traits: traits)), for: declaration.package.identity)
                 declarations.append(declaration)
             }
 

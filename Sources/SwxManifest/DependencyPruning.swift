@@ -82,7 +82,8 @@ extension Manifest {
 
     // MARK: Package lookup
 
-    func packageDependency(referencedBy dependency: TargetDependency) -> Dependency? {
+    /// The package a `.product(package:)` or `.byName` reference names, if it is a declared dependency.
+    public func packageDependency(referencedBy dependency: TargetDependency) -> Dependency? {
         switch dependency {
         case .product(_, let package?, _), .byName(let package, _):
             return self.packageDependency(named: package)
@@ -92,7 +93,7 @@ extension Manifest {
     }
 
     /// Case-insensitive, matching rdar://80594761.
-    func packageDependency(named name: String) -> Dependency? {
+    public func packageDependency(named name: String) -> Dependency? {
         let lowered = name.lowercased()
         return self.dependencies.first { $0.referenceName.lowercased() == lowered }
     }
@@ -104,7 +105,7 @@ extension Manifest {
     }
 
     /// Expands `default` (and nested enabled traits) into the full enabled set.
-    func expand(traits requested: Set<String>) -> Set<String> {
+    public func expand(traits requested: Set<String>) -> Set<String> {
         let byName = Dictionary(self.traits.map { ($0.name, $0) }, uniquingKeysWith: { $1 })
         var enabled: Set<String> = []
         var pending = Array(requested)
@@ -116,7 +117,8 @@ extension Manifest {
         return enabled
     }
 
-    func isEnabled(_ dependency: TargetDependency, enabledTraits: Set<String>) -> Bool {
+    /// Whether a target dependency's trait condition holds (`enabledTraits` already expanded).
+    public func isEnabled(_ dependency: TargetDependency, enabledTraits: Set<String>) -> Bool {
         guard self.supportsTraits, let guards = dependency.condition?.traits, !guards.isEmpty else {
             return true
         }

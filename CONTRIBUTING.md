@@ -56,6 +56,7 @@ The design is **functional core, imperative shell**.
 ```sh
 swift test                                            # 113 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
+Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)

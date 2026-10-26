@@ -17,6 +17,7 @@ enum SerializedManifestDecoder {
         static let targets = "targets"
         static let products = "products"
         static let traits = "traits"
+        static let platforms = "platforms"
         static let kind = "kind"
         static let location = "location"
         static let requirement = "requirement"
@@ -103,6 +104,7 @@ enum SerializedManifestDecoder {
         }
         let explicitName = settings[Key.name] as? String
         let traits = ((json[Key.traits] as? [[String: Any]])?.compactMap { $0[Key.name] as? String } ?? [Manifest.defaultTrait]).sorted()
+        let traitConditions = Self.traitConditions(json[Key.traits])
 
         switch kind {
         case DependencyKind.sourceControl:
@@ -113,7 +115,8 @@ enum SerializedManifestDecoder {
                 explicitName: explicitName,
                 location: location,
                 requirement: Self.requirement(settings[Key.requirement]),
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
 
         case DependencyKind.fileSystem:
@@ -124,7 +127,8 @@ enum SerializedManifestDecoder {
                 explicitName: explicitName,
                 location: .local(path: path),
                 requirement: .none,
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
 
         case DependencyKind.registry:
@@ -134,7 +138,8 @@ enum SerializedManifestDecoder {
                 explicitName: nil,
                 location: .registry(identity: identity),
                 requirement: Self.requirement(settings[Key.requirement]),
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
 
         default:
@@ -217,12 +222,24 @@ enum SerializedManifestDecoder {
         return Manifest.Target(name: json[Key.name] as? String ?? "", kind: kind, dependencies: dependencies, pluginUsages: plugins, binaryLocation: binaryLocation)
     }
 
+    /// `traits: [{name, condition: {traits: […]}}]` → trait name → condition traits, for conditional ones.
+    private static func traitConditions(_ raw: Any?) -> [String: [String]] {
+        var conditions: [String: [String]] = [:]
+        for trait in raw as? [[String: Any]] ?? [] {
+            guard let name = trait[Key.name] as? String,
+                  let condition = (trait[Key.condition] as? [String: Any])?[Key.traits] as? [String] else { continue }
+            conditions[name] = condition.sorted()
+        }
+        return conditions
+    }
+
     private static func targetDependency(_ json: Any) -> Manifest.TargetDependency? {
         guard let (kind, payload) = Self.enumCase(json), let name = payload[Key.name] as? String else { return nil }
 
-        // Only trait conditions matter for resolution; platform-only conditions keep `traits: nil`.
-        let condition = (payload[Key.condition] as? [String: Any]).map {
-            Manifest.Condition(traits: ($0[Key.traits] as? [String])?.sorted())
+        // `{platforms: [{name: "linux"}], traits: [...]}`; only traits matter for resolution, platforms label graphs.
+        let condition = (payload[Key.condition] as? [String: Any]).map { condition in
+            let platforms = (condition[Key.platforms] as? [[String: Any]] ?? []).compactMap { $0[Key.name] as? String }
+            return Manifest.Condition(platforms: platforms.isEmpty ? nil : platforms, traits: (condition[Key.traits] as? [String])?.sorted())
         }
         switch kind {
         case TargetDependencyKind.target:

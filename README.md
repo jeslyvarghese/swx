@@ -28,6 +28,7 @@ SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed free
 - **Nothing to migrate**: reads `Package.swift` as is, honours SwiftPM's flags and configuration
 - **Xcode-aware**: prepares `SourcePackages` so `xcodebuild` builds offline
 - **Apple platforms**: build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices
+- **Dependency graphs**: `swx graph` as a tree, Graphviz, Mermaid or JSON; `show-dependencies` without SwiftPM
 - **Toolchains**: installs swift.org releases and snapshots, honours `.swift-version`
 - **Tools and scripts**: runs package executables like `uvx`, and single-file scripts with dependencies
 - **Verified**: every compatibility claim is checked against SwiftPM or Xcode in CI
@@ -39,6 +40,7 @@ To learn more, read the [user guide](https://swx.quadratic.xyz/guide.html).
 ```sh
 swx package resolve                      # same Package.resolved as `swift package resolve`
 swx build -c release                     # resolves, then SwiftPM builds with resolution disabled
+swx graph                                # targets and the products they use, as a tree
 swx run --platform ios HelloApp          # build, install and launch on a simulator
 swx xcode resolve --source-packages SourcePackages
 swx toolchain install 6.4

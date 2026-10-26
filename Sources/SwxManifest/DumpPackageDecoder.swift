@@ -18,6 +18,8 @@ enum DumpPackageDecoder {
         static let targets = "targets"
         static let products = "products"
         static let traits = "traits"
+        static let platformNames = "platformNames"
+        static let condition = "condition"
         static let identity = "identity"
         static let explicitName = "nameForTargetDependencyResolutionOnly"
         static let location = "location"
@@ -101,6 +103,7 @@ enum DumpPackageDecoder {
         let identity = settings[Key.identity] as? String ?? ""
         let explicitName = settings[Key.explicitName] as? String
         let traits = ((settings[Key.traits] as? [[String: Any]])?.compactMap { $0[Key.name] as? String } ?? [Manifest.defaultTrait]).sorted()
+        let traitConditions = Self.traitConditions(settings[Key.traits])
 
         switch kind {
         case DependencyKind.sourceControl:
@@ -109,7 +112,8 @@ enum DumpPackageDecoder {
                 explicitName: explicitName,
                 location: Self.sourceControlLocation(settings[Key.location]),
                 requirement: Self.requirement(settings[Key.requirement]),
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
         case DependencyKind.fileSystem:
             return Manifest.Dependency(
@@ -117,7 +121,8 @@ enum DumpPackageDecoder {
                 explicitName: explicitName,
                 location: .local(path: settings[Key.path] as? String ?? ""),
                 requirement: .none,
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
         case DependencyKind.registry:
             return Manifest.Dependency(
@@ -125,7 +130,8 @@ enum DumpPackageDecoder {
                 explicitName: nil,
                 location: .registry(identity: identity),
                 requirement: Self.requirement(settings[Key.requirement]),
-                traits: traits
+                traits: traits,
+                traitConditions: traitConditions
             )
         default:
             throw ManifestError(description: "unknown dependency kind '\(kind)'")
@@ -209,11 +215,24 @@ enum DumpPackageDecoder {
         }
     }
 
+    /// `traits: [{name, condition: {traits: […]}}]` → trait name → condition traits, for conditional ones.
+    private static func traitConditions(_ raw: Any?) -> [String: [String]] {
+        var conditions: [String: [String]] = [:]
+        for trait in raw as? [[String: Any]] ?? [] {
+            guard let name = trait[Key.name] as? String,
+                  let condition = (trait[Key.condition] as? [String: Any])?[Key.traits] as? [String] else { continue }
+            conditions[name] = condition.sorted()
+        }
+        return conditions
+    }
+
     private static func condition(_ values: [Any], at position: Int) -> Manifest.Condition? {
         guard values.count > position, let json = values[position] as? [String: Any] else {
             return nil
         }
-        return Manifest.Condition(traits: (json[Key.traits] as? [String])?.sorted())
+        // dump-package writes `platformNames: []` for trait-only conditions.
+        let platforms = json[Key.platformNames] as? [String] ?? []
+        return Manifest.Condition(platforms: platforms.isEmpty ? nil : platforms, traits: (json[Key.traits] as? [String])?.sorted())
     }
 
     /// `{"library": ["automatic"]}`, `{"executable": null}`, … → kind.

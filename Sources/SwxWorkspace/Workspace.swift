@@ -142,8 +142,8 @@ public struct WorkspaceOptions: Sendable {
 
 /// Orchestrates resolution for one root package. The imperative shell around the pure solver.
 public struct Workspace: Sendable {
-    private let options: WorkspaceOptions
-    private let store: Store
+    let options: WorkspaceOptions
+    let store: Store
 
     public init(options: WorkspaceOptions) {
         self.options = options
@@ -188,7 +188,7 @@ public struct Workspace: Sendable {
     }
 
     /// The root's identity, origin hash, and how to obtain its manifest.
-    private struct RootContext: Sendable {
+    struct RootContext: Sendable {
         let reference: PackageReference
         let originHash: String
         let layout: Layout
@@ -207,7 +207,7 @@ public struct Workspace: Sendable {
         }
     }
 
-    private enum RootSource: Sendable {
+    enum RootSource: Sendable {
         case package(URL)
         /// Xcode declares dependencies directly, plus package folders placed in the project,
         /// which are roots of the graph whose dependencies join the project's.
@@ -219,7 +219,7 @@ public struct Workspace: Sendable {
     /// Xcode always writes `Package.resolved` v3.
     private static let xcodeToolsVersion = "6.0.0"
 
-    private func rootContext() async throws -> RootContext {
+    func rootContext() async throws -> RootContext {
         switch self.options.root {
         case .package(let directory):
             let buildDirectory = directory.appendingPathComponent(WellKnownFile.buildDirectory, isDirectory: true)
@@ -646,7 +646,14 @@ public struct Workspace: Sendable {
         facts: FactProvider
     ) async throws -> Overrides {
         var result = Overrides()
-        var pending = root.requiredDependencies(role: .root)
+
+        // Each dependency travels with its declaring package's enabled traits, for conditional trait requests.
+        let defaults: Set<String> = [Manifest.defaultTrait]
+        func declared(by manifest: Manifest, role: ManifestRole) -> [(dependency: Manifest.Dependency, parentTraits: Set<String>)] {
+            let traits = manifest.expand(traits: defaults)
+            return manifest.requiredDependencies(role: role).map { ($0, traits) }
+        }
+        var pending = declared(by: root, role: .root)
 
         // Edited packages override every requirement on them and contribute their copy's dependencies.
         for (identity, edited) in editedDependencies {
@@ -654,14 +661,14 @@ public struct Workspace: Sendable {
             let path = edited.path ?? packageDirectory.appendingPathComponent(Self.editedPackagesDirectory).appendingPathComponent(edited.subpath).path
             let manifest = await facts.transform(try await loader.load(packageAt: URL(fileURLWithPath: path)))
             result.overridden[identity] = Override(package: mirrors.effective(previous.package), state: .edited(previousPin: previous))
-            pending += manifest.requiredDependencies(role: .dependency)
+            pending += declared(by: manifest, role: .dependency)
         }
 
         while !pending.isEmpty {
-            let dependency = pending.removeFirst()
+            let (dependency, parentTraits) = pending.removeFirst()
             let declaration = mirrors.effective(dependency.declaration)
             let identity = declaration.package.identity
-            await facts.noteTraits(dependency.traits, for: identity)
+            await facts.noteTraits(dependency.requestedTraits(enabledInParent: parentTraits), for: identity)
             guard result.overridden[identity]?.isEdited != true else { continue }
 
             // Versioned dependencies go to the solver as-is.
@@ -689,7 +696,7 @@ public struct Workspace: Sendable {
                 throw WorkspaceError(description: "unsupported requirement for \(identity): \(declaration.requirement)")
             }
             result.overridden[identity] = override
-            pending += await facts.transform(manifest).requiredDependencies(role: .dependency)
+            pending += declared(by: await facts.transform(manifest), role: .dependency)
         }
         return result
     }

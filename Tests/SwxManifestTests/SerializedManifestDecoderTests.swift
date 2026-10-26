@@ -56,7 +56,7 @@ struct SerializedManifestDecoderTests {
         #expect(manifest.toolsVersion == "6.1.0")
         #expect(manifest.targets[0].dependencies == [
             .byName(name: "ByName", condition: nil),
-            .target(name: "T2", condition: Manifest.Condition(traits: nil)),
+            .target(name: "T2", condition: Manifest.Condition(platforms: ["linux"], traits: nil)),
             .product(name: "ArgumentParser", package: "swift-argument-parser", condition: Manifest.Condition(traits: ["B"])),
         ])
         #expect(manifest.targets[0].pluginUsages == [Manifest.PluginUsage(name: "P2", package: "pkg")])
