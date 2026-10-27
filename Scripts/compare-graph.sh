@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Differential check: `swx package show-dependencies` against SwiftPM's, byte for byte, in every
-# format; then `swx graph` in every format at both levels, with Graphviz accepting its dot output
+# format, prebuilt swift-syntax included; then `swx graph` in every format at both levels, with Graphviz accepting its dot output
 # when `dot` is installed.
 #
 #   Scripts/compare-graph.sh [swx-binary] [package-dir …]   (default: the sample and graph fixtures)
@@ -11,7 +11,8 @@ swx_input="${1:-$(swift build -c release --show-bin-path)/swx}"
 readonly swx="$(cd "$(dirname "$swx_input")" && pwd)/$(basename "$swx_input")"
 shift || true
 packages=("$@")
-[ ${#packages[@]} -eq 0 ] && packages=("$repo/Tests/Fixtures/sample" "$repo/Tests/Fixtures/graph")
+# The macro fixtures check SwiftPM's swap of swift-syntax for its prebuilt libraries (or not).
+[ ${#packages[@]} -eq 0 ] && packages=("$repo/Tests/Fixtures/sample" "$repo/Tests/Fixtures/graph" "$repo/Tests/Fixtures/macros" "$repo/Tests/Fixtures/macros-mixed")
 readonly work="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
 

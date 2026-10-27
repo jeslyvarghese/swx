@@ -136,9 +136,10 @@ swx graph -o graph.svg                     <span class="c"># drawn by Graphviz (
             <p>
                 <code>swx package show-dependencies</code> prints exactly what SwiftPM prints, in all four of its
                 formats (<code>text</code>, <code>dot</code>, <code>json</code>, <code>flatlist</code>), without
-                starting SwiftPM: 17 ms instead of 359 ms for Vapor's 32 packages. Two cases go to SwiftPM itself: graphs with swift-syntax, which SwiftPM may swap
-                for prebuilt libraries, and edited packages. SwiftPM lists two or more traits of a package in a
-                different order on every run; swx sorts them.
+                starting SwiftPM: 17 ms instead of 359 ms for Vapor's 32 packages. Where SwiftPM swaps swift-syntax for
+                its prebuilt libraries (macros, and the tests of macros), swx drops it from the graph by the same
+                rules. Graphs with edited packages go to SwiftPM itself. SwiftPM lists two or more traits of a
+                package in a different order on every run; swx sorts them.
             </p>
         </section>
 

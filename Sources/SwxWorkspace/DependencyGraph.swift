@@ -25,17 +25,12 @@ public enum GraphImageFormat: String, Sendable, CaseIterable {
 }
 
 extension Workspace {
-    /// Packages SwiftPM may swap for prebuilt libraries, dropping them from the graph it prints.
-    /// Whether it does depends on its prebuilt downloads, so such graphs are SwiftPM's to print.
-    private static let prebuiltPackages: Set<String> = ["swift-syntax"]
-
     /// `swift package show-dependencies --format …`, byte for byte. Expects a resolved workspace.
+    /// Prebuilt libraries recorded in the state replace products as SwiftPM replaces them.
     public func showDependencies(_ format: ShowDependenciesFormat) async throws -> String {
-        let graph = try await self.packageGraph()
-        guard !graph.reachablePackages.contains(where: { Self.prebuiltPackages.contains($0.identity) }) else {
-            throw GraphUnsupported(description: "graphs with swift-syntax, which SwiftPM may replace with prebuilts")
-        }
-        return graph.showDependencies(format)
+        let root = try await self.rootContext()
+        let state = FileSystem.readIfPresent(root.layout.workspaceState).flatMap(WorkspaceState.decodeIfCompatible) ?? WorkspaceState(dependencies: [:])
+        return try await self.packageGraph().applyingPrebuilts(state.prebuiltProducts).showDependencies(format)
     }
 
     /// `swx graph`. Expects a resolved workspace.

@@ -265,3 +265,41 @@ struct TargetGraphTests {
         #expect(graph.edges.count == 4)
     }
 }
+
+// MARK: - Prebuilts
+
+struct PrebuiltGraphTests {
+    /// app's macro uses syntax; with `lib` also using it from a library, syntax stays.
+    private func graph(libraryUsesSyntax: [Manifest.TargetDependency]) -> PackageGraph {
+        let (syntaxTarget, syntaxProduct) = library("SwiftSyntax")
+        let app = manifest(
+            "App",
+            dependencies: [dependency("https://example.com/syntax")],
+            targets: [
+                Manifest.Target(name: "Mac", kind: .macro, dependencies: [.product(name: "SwiftSyntax", package: "syntax", condition: nil)], pluginUsages: []),
+                Manifest.Target(name: "Lib", dependencies: [.target(name: "Mac", condition: nil)] + libraryUsesSyntax, pluginUsages: []),
+            ],
+            products: [Manifest.Product(name: "Lib", targets: ["Lib"])]
+        )
+        return PackageGraphBuilder.build(
+            root: package("app", app, role: .root),
+            dependencies: [package("syntax", manifest("Syntax", targets: [syntaxTarget], products: [syntaxProduct]))],
+            identify: { $0.identity }
+        )
+    }
+
+    @Test func dropsPackagesOnlyHostModulesUse() {
+        let pruned = self.graph(libraryUsesSyntax: []).applyingPrebuilts(["syntax": ["SwiftSyntax"]])
+        #expect(pruned.dependencies["app"] == [])
+    }
+
+    @Test func keepsPackagesTheDestinationNeeds() {
+        let uses = [Manifest.TargetDependency.product(name: "SwiftSyntax", package: "syntax", condition: nil)]
+        let kept = self.graph(libraryUsesSyntax: uses).applyingPrebuilts(["syntax": ["SwiftSyntax"]])
+        #expect(kept.dependencies["app"] == ["syntax"])
+    }
+
+    @Test func leavesGraphsWithoutPrebuiltsAlone() {
+        #expect(self.graph(libraryUsesSyntax: []).applyingPrebuilts([:]).dependencies["app"] == ["syntax"])
+    }
+}

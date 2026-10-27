@@ -116,6 +116,18 @@ public struct WorkspaceState: Sendable {
         self.prebuilts = []
     }
 
+    /// The products each package's recorded prebuilts stand in for (identity → product names).
+    var prebuiltProducts: [String: Set<String>] {
+        var products: [String: Set<String>] = [:]
+        for case .object(let entry) in self.prebuilts {
+            guard case .string(let identity)? = entry[Key.identity], case .array(let names)? = entry[Key.products] else { continue }
+            for case .string(let name) in names {
+                products[identity, default: []].insert(name)
+            }
+        }
+        return products
+    }
+
     // MARK: Artifacts
 
     public var artifactKeys: [ManagedArtifact.Key] {
@@ -203,6 +215,7 @@ public struct WorkspaceState: Sendable {
         static let type = "type"
         static let url = "url"
         static let checksum = "checksum"
+        static let products = "products"
     }
 
     private enum SourceType {
