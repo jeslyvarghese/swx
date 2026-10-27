@@ -76,6 +76,13 @@ public struct ReleaseUpload: Sendable {
     }
 }
 
+/// How the metadata part declares its encoding: SwiftPM before 6.4 says `quoted-printable`
+/// (while sending the JSON as is); 6.4 says nothing.
+public enum MetadataPartEncoding: Sendable {
+    case quotedPrintableLabel
+    case unlabeled
+}
+
 /// Uploads a release to a registry: `PUT /{scope}/{name}/{version}` with a multipart body laid out
 /// byte for byte as SwiftPM's (registries are tested against SwiftPM's requests).
 public struct RegistryPublisher: Sendable {
@@ -112,10 +119,12 @@ public struct RegistryPublisher: Sendable {
 
     let configuration: RegistryConfiguration
     let credentials: RegistryCredentials
+    let metadataEncoding: MetadataPartEncoding
 
-    public init(configuration: RegistryConfiguration, credentials: RegistryCredentials) {
+    public init(configuration: RegistryConfiguration, credentials: RegistryCredentials, metadataEncoding: MetadataPartEncoding) {
         self.configuration = configuration
         self.credentials = credentials
+        self.metadataEncoding = metadataEncoding
     }
 
     public func publish(_ upload: ReleaseUpload, scope: String, name: String, version: String, to registry: URL) async throws -> PublishResponse {
@@ -136,7 +145,7 @@ public struct RegistryPublisher: Sendable {
         }
 
         // In memory, as SwiftPM sends it (a file upload would add resumable-upload headers).
-        let response = try await HTTP.put(url, body: Self.body(upload, boundary: boundary), headers: headers)
+        let response = try await HTTP.put(url, body: Self.body(upload, boundary: boundary, metadataEncoding: self.metadataEncoding), headers: headers)
 
         if let version = response.header(Header.contentVersion), version != Value.apiVersion {
             throw SourceError(description: "\(url.absoluteString) speaks registry API version \(version), expected \(Value.apiVersion)")
@@ -156,7 +165,7 @@ public struct RegistryPublisher: Sendable {
 
     /// SwiftPM's multipart layout, quirks included: binary parts carry
     /// `Content-Transfer-Encoding`, and the metadata part ends with its JSON, no CRLF.
-    static func body(_ upload: ReleaseUpload, boundary: String) -> Data {
+    static func body(_ upload: ReleaseUpload, boundary: String, metadataEncoding: MetadataPartEncoding) -> Data {
         var body = Data()
         func binaryPart(_ name: String, type: String, _ bytes: Data, first: Bool) {
             let lead = first ? "" : "\r\n"
@@ -169,7 +178,8 @@ public struct RegistryPublisher: Sendable {
             binaryPart(Field.archiveSignature, type: "application/octet-stream", signature, first: false)
         }
         if let metadata = upload.metadata {
-            body.append(Data("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"\(Field.metadata)\"\r\nContent-Type: application/json\r\n\r\n".utf8))
+            let encoding = metadataEncoding == .quotedPrintableLabel ? "Content-Transfer-Encoding: quoted-printable\r\n" : ""
+            body.append(Data("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"\(Field.metadata)\"\r\nContent-Type: application/json\r\n\(encoding)\r\n".utf8))
             body.append(metadata)
             if let signature = upload.metadataSignature {
                 binaryPart(Field.metadataSignature, type: "application/octet-stream", signature, first: false)

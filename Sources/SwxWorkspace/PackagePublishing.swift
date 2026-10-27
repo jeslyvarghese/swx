@@ -1,5 +1,6 @@
 import Foundation
 import SwxCore
+import SwxManifest
 import SwxSource
 import SwxSystem
 
@@ -68,6 +69,8 @@ extension Workspace {
     private enum Publishing {
         static let metadataFile = "package-metadata.json"
         static let identitySeparator: Character = "."
+        /// SwiftPM 6.4 stopped labelling the metadata part `quoted-printable`.
+        static let unlabeledMetadataSince = ToolsVersion(6, 4, 0)
         static let scratchComponents = ["registry", "publish"]
         static let sourceDirectory = "source"
         /// What SwiftPM leaves out of the copy it archives (top level only).
@@ -168,7 +171,10 @@ extension Workspace {
         }
 
         // Upload.
-        let publisher = RegistryPublisher(configuration: root.registries, credentials: RegistryCredentials(sources: self.options.swiftPM.credentials))
+        // The request of the SwiftPM this toolchain ships.
+        let toolchain = try await Toolchain.detect(store: self.store)
+        let encoding: MetadataPartEncoding = toolchain.toolsVersion < Publishing.unlabeledMetadataSince ? .quotedPrintableLabel : .unlabeled
+        let publisher = RegistryPublisher(configuration: root.registries, credentials: RegistryCredentials(sources: self.options.swiftPM.credentials), metadataEncoding: encoding)
         switch try await publisher.publish(upload, scope: scope, name: name, version: request.version, to: registry) {
         case .published(let location):
             return .published(registry: registry, location: location)
