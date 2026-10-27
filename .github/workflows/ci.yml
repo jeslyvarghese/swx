@@ -13,11 +13,21 @@ jobs:
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           swift --version
+      # swx builds and tests swx: the latest release resolves, SwiftPM compiles.
+      - uses: ./
+      - name: Lockfile is current
+        run: swx package resolve --check
       - name: Unit tests
-        run: swift test
+        run: swx test
+      - name: Build
+        run: swx build -c release
+      - name: Self-host (this commit's swx resolves, builds and tests swx)
+        run: |
+          .build/release/swx package resolve --check
+          .build/release/swx build -c release
+          .build/release/swx test --selective --filter ToolsVersionSpecificationTests
       - name: Differential resolve against SwiftPM
         run: |
-          swift build -c release
           mkdir -p /tmp/fixture/Sources/App
           cp Tests/Fixtures/sample/Package.swift /tmp/fixture/
           echo 'print("hi")' > /tmp/fixture/Sources/App/main.swift
@@ -91,11 +101,24 @@ jobs:
     container: swift:6.4.1-noble
     steps:
       - uses: actions/checkout@v4
+      # The Swift image has no curl, which the installer needs.
+      - name: Install curl
+        run: apt-get update -qq && apt-get install -y -qq curl
+      # A container path: runner.temp names the host's.
+      - uses: ./
+        with:
+          install-dir: /usr/local/bin
       - name: Unit tests
-        run: swift test
+        run: swx test
+      - name: Build
+        run: swx build -c release
+      - name: Self-host (this commit's swx resolves, builds and tests swx)
+        run: |
+          .build/release/swx package resolve --check
+          .build/release/swx build -c release
+          .build/release/swx test --selective --filter ToolsVersionSpecificationTests
       - name: Workflow against SwiftPM
         run: |
-          swift build -c release
           mkdir -p /work/Sources/App
           cp Tests/Fixtures/sample/Package.swift Tests/Fixtures/sample/greet.swift /work/
           echo 'print("hi")' > /work/Sources/App/main.swift
