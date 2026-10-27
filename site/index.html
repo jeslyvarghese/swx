@@ -43,7 +43,7 @@
         <div class="wrap">
             <h2>Key features</h2>
             <ul class="features">
-                <li><b>Fast:</b> cold resolves 4–7× faster than SwiftPM, and a no-op in 20 ms.</li>
+                <li><b>Fast:</b> cold resolves about 4× faster than SwiftPM, and a no-op in 20 ms.</li>
                 <li><b>Drop-in:</b> the same <code>Package.resolved</code>, <code>.build/checkouts</code> and <code>workspace-state.json</code> as SwiftPM.</li>
                 <li><b>Familiar:</b> SwiftPM's commands and flags; anything swx doesn't handle is forwarded to <code>swift package</code>.</li>
                 <li><b>Xcode-aware:</b> prepares <code>SourcePackages</code> so <code>xcodebuild</code> builds offline.</li>
@@ -111,14 +111,14 @@ import ArgumentParser</pre>
             <h2>Performance</h2>
             <p class="section-lede">
                 Vapor + Fluent (32 packages), Apple Silicon, Swift 6.4. Both tools start from their own
-                empty caches, and every run produced byte-identical files. <code>Scripts/benchmark.py</code>
+                empty caches, and every run produced byte-identical files. The cold resolve depends most on the network, so it is the median of three runs. <code>Scripts/benchmark.py</code>
                 reproduces the runs.
             </p>
             <div class="bench">
                 <div class="bench-row">
-                    <h3><span>Cold resolve, empty caches</span> <span class="speedup">7×</span></h3>
-                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">77 s</span></div></div>
-                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 14.2%"><div class="fill"></div><span class="value">10.9 s</span></div></div>
+                    <h3><span>Cold resolve, empty caches</span> <span class="speedup">4×</span></h3>
+                    <div class="bar"><span class="label">SwiftPM</span><div class="track" style="--w: 100%"><div class="fill"></div><span class="value inside">72.5 s</span></div></div>
+                    <div class="bar swx"><span class="label">swx</span><div class="track" style="--w: 23.9%"><div class="fill"></div><span class="value">17.3 s</span></div></div>
                 </div>
                 <div class="bench-row">
                     <h3><span>No lockfile, warm cache</span> <span class="speedup">8×</span></h3>

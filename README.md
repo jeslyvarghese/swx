@@ -23,7 +23,7 @@
 What `uv` is to `pip`, for Swift. swx resolves, builds and runs Swift packages, and writes
 SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed freely.
 
-- **Fast**: cold resolves 4–7× faster than SwiftPM, no-ops in 20 ms
+- **Fast**: cold resolves about 4× faster than SwiftPM, no-ops in 20 ms
 - **Drop-in**: the same `Package.resolved`, `.build/checkouts` and `workspace-state.json`
 - **Nothing to migrate**: reads `Package.swift` as is, honours SwiftPM's flags and configuration
 - **Xcode-aware**: prepares `SourcePackages` so `xcodebuild` builds offline
@@ -59,11 +59,12 @@ Anything swx doesn't handle is forwarded to `swift package`.
 ## Performance
 
 Vapor + Fluent (32 packages) on Apple Silicon with Swift 6.4, both tools starting from empty
-caches. Every run produced byte-identical `Package.resolved` and `workspace-state.json`.
+caches. Cold resolves depend most on the network, so that row is the median of three runs. Every
+run produced byte-identical `Package.resolved` and `workspace-state.json`.
 
 | Scenario | SwiftPM | swx | Speedup |
 |---|---|---|---|
-| Cold resolve | 77 s | 10.9 s | 7× |
+| Cold resolve | 72.5 s | 17.3 s | 4× |
 | No lockfile, warm cache | 13.4 s | 1.6 s | 8× |
 | Fresh clone (lockfile, no `.build`) | 1.5 s | 0.10 s | 15× |
 | No-op | 0.26 s | 0.02 s | 13× |
