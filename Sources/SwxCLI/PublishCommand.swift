@@ -47,6 +47,9 @@ struct Publish: AsyncParsableCommand {
     @Flag(help: "Prepare and sign the archive without publishing it to the registry.")
     var dryRun = false
 
+    @Option(help: "When the registry processes the release asynchronously, wait up to this many seconds for the outcome instead of printing its status location.")
+    var wait: Int?
+
     func run() async throws {
         let request = try self.request()
         let outcome = try await CommandSupport.reportingErrors { try await self.global.makeWorkspace().publish(request) }
@@ -91,7 +94,8 @@ struct Publish: AsyncParsableCommand {
             metadataPath: self.metadataPath.map(FileSystemPaths.absolute),
             signing: signing,
             transport: self.allowInsecureHTTP ? .allowInsecureHTTP : .httpsOnly,
-            effect: self.dryRun ? .dryRun : .publish
+            effect: self.dryRun ? .dryRun : .publish,
+            processing: self.wait.map { .wait(timeout: .seconds($0)) } ?? .report
         )
     }
 }

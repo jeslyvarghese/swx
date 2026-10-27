@@ -189,8 +189,10 @@ public struct RegistryPublisher: Sendable {
     }
 
     private enum Status {
+        static let ok = 200
         static let created = 201
         static let accepted = 202
+        static let movedPermanently = 301
     }
 
     let configuration: RegistryConfiguration
@@ -236,6 +238,36 @@ public struct RegistryPublisher: Sendable {
             return .processing(status: status, retryAfter: response.header(Header.retryAfter).flatMap { Int($0) })
         default:
             throw SourceError(description: "publishing to \(url.absoluteString) failed: HTTP \(response.status) \(Self.problem(in: response.body))")
+        }
+    }
+
+    private static let defaultRetryAfter = 5
+
+    /// Polls a 202's status location (SE-0391) until the registry finishes: a redirect to the
+    /// release means published (URLSession follows it), 202 still processing, anything else failed.
+    public func waitForProcessing(status: URL, retryAfter: Int?, registry: URL, timeout: Duration) async throws -> URL? {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        var delay = retryAfter ?? Self.defaultRetryAfter
+        var headers = [Header.accept: Value.accept]
+        if let credential = await self.credentials.credential(for: registry) {
+            headers[Header.authorization] = RegistryAuthorization.header(for: credential, authentication: self.configuration.authentication(for: registry))
+        }
+
+        while true {
+            guard clock.now + .seconds(delay) < deadline else {
+                throw SourceError(description: "the registry was still processing the release after \(timeout); its status is at \(status.absoluteString)")
+            }
+            try await Task.sleep(for: .seconds(delay))
+            let response = try await HTTP.get(status, headers: headers)
+            switch response.status {
+            case Status.accepted:
+                delay = response.header(Header.retryAfter).flatMap { Int($0) } ?? delay
+            case Status.ok, Status.movedPermanently:
+                return response.header(Header.location).flatMap(URL.init(string:))
+            default:
+                throw SourceError(description: "the registry did not publish the release: HTTP \(response.status) \(Self.problem(in: response.body))")
+            }
         }
     }
 

@@ -39,6 +39,8 @@ Options:
     --token TOKEN       require a bearer token
     --log FILE          append one line per request
     --uploads DIR       record publish requests here
+    --publish-async N   answer publishes with 202 and a status location that reports 202 (processing)
+                        N times, then 301 to the release; with --publish-fail, 422 instead
 """
 
 import argparse
@@ -71,8 +73,11 @@ def normalized(version):
 
 
 class Registry:
-    def __init__(self, root, scm_map, basic, token, log, uploads=None):
+    def __init__(self, root, scm_map, basic, token, log, uploads=None, publish_async=None, publish_fail=False):
         self.uploads = uploads
+        self.publish_async = publish_async
+        self.publish_fail = publish_fail
+        self.status_polls = {}
         self.root = os.path.abspath(root)
         self.scm_map = scm_map
         self.basic = basic
@@ -212,6 +217,8 @@ def make_handler(registry):
 
             if parts == ["availability"]:
                 return self.send(200)
+            if len(parts) == 2 and parts[0] == "status":
+                return self.publish_status(parts[1])
             if parts == ["identifiers"]:
                 return self.identifiers(query.get("url", [""])[0])
             if len(parts) == 2:
@@ -343,7 +350,23 @@ def make_handler(registry):
                     with open(target, "wb") as handle:
                         handle.write(archive.read(member))
             registry.archives.pop((scope.lower(), name.lower(), version), None)
-            self.send(201, b"", headers=[("Location", f"http://{self.headers['Host']}/{scope}/{name}/{version}")])
+            release = f"http://{self.headers['Host']}/{scope}/{name}/{version}"
+            if registry.publish_async is None:
+                return self.send(201, b"", headers=[("Location", release)])
+            label = f"{scope}.{name}.{version}"
+            registry.status_polls[label] = (registry.publish_async, release)
+            self.send(202, b"", headers=[("Location", f"http://{self.headers['Host']}/status/{label}"), ("Retry-After", "1")])
+
+        def publish_status(self, label):
+            if label not in registry.status_polls:
+                return self.problem(404, "no such publication")
+            remaining, release = registry.status_polls[label]
+            if remaining > 0:
+                registry.status_polls[label] = (remaining - 1, release)
+                return self.send(202, b"", headers=[("Retry-After", "1")])
+            if registry.publish_fail:
+                return self.problem(422, "the archive failed the registry's checks")
+            self.send(301, b"", headers=[("Location", release)])
 
         def source_archive(self, scope, name, version):
             package_dir, real_scope, real_name = registry.package_dir(scope, name)
@@ -368,6 +391,8 @@ def main():
     parser.add_argument("--token")
     parser.add_argument("--log")
     parser.add_argument("--uploads")
+    parser.add_argument("--publish-async", type=int)
+    parser.add_argument("--publish-fail", action="store_true")
     arguments = parser.parse_args()
 
     scm_map = {}
@@ -375,7 +400,7 @@ def main():
         with open(arguments.scm_map) as handle:
             scm_map = json.load(handle)
 
-    registry = Registry(arguments.root, scm_map, arguments.basic, arguments.token, arguments.log, arguments.uploads)
+    registry = Registry(arguments.root, scm_map, arguments.basic, arguments.token, arguments.log, arguments.uploads, arguments.publish_async, arguments.publish_fail)
     server = ThreadingHTTPServer(("127.0.0.1", arguments.port), make_handler(registry))
     print(server.server_address[1], flush=True)
     server.serve_forever()

@@ -182,7 +182,8 @@ swx inspect imports         <span class="c"># undeclared imports (exit 1) and un
 <pre>swx publish mona.LinkedList 1.2.0 --url https://registry.example.com
 swx publish mona.LinkedList 1.2.0 --private-key-path key.p8 --cert-chain-paths leaf.der intermediate.der root.der
 swx publish mona.LinkedList 1.2.0 --signing-identity "Mona Signer"                <span class="c"># a Keychain identity (macOS)</span>
-swx publish mona.LinkedList 1.2.0 --dry-run --scratch-directory out   <span class="c"># archive and signatures, no upload</span></pre>
+swx publish mona.LinkedList 1.2.0 --dry-run --scratch-directory out   <span class="c"># archive and signatures, no upload</span>
+swx publish mona.LinkedList 1.2.0 --wait 600                          <span class="c"># follow an asynchronous registry to the outcome</span></pre>
             <p>
                 With a key and certificate chain, the manifests in the archive, the archive and the metadata are
                 signed (<code>cms-1.0.0</code>, as SE-0391 defines). The registry is <code>--url</code>, or the one

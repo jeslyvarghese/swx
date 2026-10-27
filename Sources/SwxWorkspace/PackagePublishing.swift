@@ -25,6 +25,14 @@ public enum PublishEffect: Sendable {
     case dryRun
 }
 
+/// What `swx publish` does when the registry is still processing the release.
+public enum ProcessingWait: Sendable {
+    /// Report the status location, as SwiftPM does.
+    case report
+    /// Poll it until the registry finishes, up to the duration given (`--wait`).
+    case wait(timeout: Duration)
+}
+
 /// `swx publish`'s inputs, spelled as `swift package-registry publish` takes them.
 public struct PublishRequest: Sendable {
     public var identity: String
@@ -37,6 +45,7 @@ public struct PublishRequest: Sendable {
     public var signing: PublishSigning
     public var transport: RegistryTransport
     public var effect: PublishEffect
+    public var processing: ProcessingWait
 
     public init(
         identity: String,
@@ -46,8 +55,10 @@ public struct PublishRequest: Sendable {
         metadataPath: URL? = nil,
         signing: PublishSigning = .unsigned,
         transport: RegistryTransport = .httpsOnly,
-        effect: PublishEffect = .publish
+        effect: PublishEffect = .publish,
+        processing: ProcessingWait = .report
     ) {
+        self.processing = processing
         self.identity = identity
         self.version = version
         self.registryURL = registryURL
@@ -180,8 +191,12 @@ extension Workspace {
         switch try await publisher.publish(upload, scope: scope, name: name, version: request.version, to: registry) {
         case .published(let location):
             return .published(registry: registry, location: location)
-        case .processing(let status, _):
-            return .processing(registry: registry, status: status)
+        case .processing(let status, let retryAfter):
+            guard case .wait(let timeout) = request.processing else {
+                return .processing(registry: registry, status: status)
+            }
+            let location = try await publisher.waitForProcessing(status: status, retryAfter: retryAfter, registry: registry, timeout: timeout)
+            return .published(registry: registry, location: location)
         }
     }
 

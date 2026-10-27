@@ -12,6 +12,8 @@
 #   refused, so swx's signatures (archive and manifests) are valid where SwiftPM checks them;
 # - a release signed with --signing-identity (a Keychain identity, from a throwaway keychain the
 #   user's search list never sees) is accepted by SwiftPM, signer and all;
+# - a registry that processes asynchronously (202): both print the same status message, and
+#   swx --wait follows the status until the release is published, or reports its failure;
 # - unsigned publishes match too, and both refuse plain HTTP without --allow-insecure-http.
 #
 #   Scripts/compare-registry-publish.sh [swx-binary]
@@ -70,9 +72,10 @@ git init --quiet && git add . && git -c user.email=fixture@example.com -c user.n
 # Starts a test registry over `root`, recording uploads; sets `port`.
 start_registry() {
     local root="$1" uploads="$2"
+    shift 2
     mkdir -p "$root"
     # Its output goes to files, and it leaves the job table, so stopping it is silent.
-    python3 -I "$repo/Scripts/test-registry.py" --root "$root" --uploads "$uploads" > "$root.port" 2> "$root.log" &
+    python3 -I "$repo/Scripts/test-registry.py" --root "$root" --uploads "$uploads" "$@" > "$root.port" 2> "$root.log" &
     servers+=($!)
     disown $!
     for _ in $(seq 600); do [ -s "$root.port" ] && break; sleep 0.1; done
@@ -176,6 +179,32 @@ SWX_SIGNING_KEYCHAIN="$keychain" "$swx" publish --config-path "$work/publish-con
 signer="$(resolve swiftpm "$swx_port" 1.1.0)"
 [ "$signer" = "Mona Signer" ] || fail "SwiftPM recorded signer '$signer' for the Keychain-signed release"
 echo "SwiftPM accepts a release signed with a Keychain identity"
+
+# MARK: Asynchronous registries
+
+start_registry "$work/registry-async" "$work/uploads-async" --publish-async 2
+readonly async_port="$port"
+start_registry "$work/registry-failing" "$work/uploads-failing" --publish-async 1 --publish-fail
+readonly failing_port="$port"
+publish_async() {
+    local tool="$1" version="$2" registry_port="$3"
+    shift 3
+    if [ "$tool" = swiftpm ]; then
+        swift package-registry publish --config-path "$work/publish-config" mona.Pub "$version" --url "http://127.0.0.1:$registry_port" --allow-insecure-http --scratch-directory "$work/dry-spm" "$@"
+    else
+        "$swx" publish --config-path "$work/publish-config" mona.Pub "$version" --url "http://127.0.0.1:$registry_port" --allow-insecure-http --scratch-directory "$work/dry-swx" "$@"
+    fi
+}
+spm_message="$(publish_async swiftpm 4.0.0 "$async_port" | tail -1)"
+swx_message="$(publish_async swx 4.0.1 "$async_port" | tail -1)"
+[ "${spm_message//4.0.0/V}" = "${swx_message//4.0.1/V}" ] || fail "202 messages differ: '$spm_message' vs '$swx_message'"
+waited="$(publish_async swx 4.0.2 "$async_port" --wait 30 | tail -1)"
+[[ "$waited" == "mona.Pub version 4.0.2 was successfully published to http://127.0.0.1:$async_port"* ]] || fail "--wait didn't report the publication: $waited"
+if failed="$(publish_async swx 4.0.3 "$failing_port" --wait 30 2>&1)"; then
+    fail "--wait succeeded although the registry rejected the release"
+fi
+[[ "$failed" == *"failed the registry's checks"* ]] || fail "--wait didn't report the registry's reason: $failed"
+echo "asynchronous registries: same status message as SwiftPM; --wait reports the outcome"
 
 # MARK: Unsigned, and plain HTTP
 
