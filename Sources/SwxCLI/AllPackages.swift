@@ -12,7 +12,7 @@ enum AllPackages {
 
     /// The packages under `global`'s package path; an error when there are none.
     static func packages(_ global: GlobalOptions) throws -> [URL] {
-        let packages = PackageDiscovery.packages(under: global.packageURL)
+        let packages = try CommandSupport.reportingErrors { try PackageDiscovery.packages(under: global.packageURL) }
         guard !packages.isEmpty else {
             throw ValidationError("no Package.swift under \(global.packageURL.path)")
         }
@@ -78,7 +78,7 @@ enum AllPackages {
         var remaining = arguments
         let root = FileSystemPaths.absolute(Passthrough.packagePath(in: remaining))
         Passthrough.removePackagePath(from: &remaining)
-        let packages = PackageDiscovery.packages(under: root)
+        let packages = try CommandSupport.reportingErrors { try PackageDiscovery.packages(under: root) }
         guard !packages.isEmpty else {
             throw ValidationError("no Package.swift under \(root.path)")
         }

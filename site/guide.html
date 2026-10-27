@@ -227,6 +227,12 @@ swx package update --all
 swx build --all                    <span class="c"># one package after another</span>
 swx test --all --selective
 swx cache pull --all &amp;&amp; swx cache push --all</pre>
+            <p>
+                To choose the packages, <code>.swx/workspace.json</code> at the root lists globs of package
+                directories to cover and to leave out (<code>*</code> within a path component, <code>**</code>
+                across them, <code>.</code> for the root):
+            </p>
+<pre>{ "packages": ["Packages/**", "."], "exclude": ["**/Examples/**"] }</pre>
         </section>
 
         <section id="cache">

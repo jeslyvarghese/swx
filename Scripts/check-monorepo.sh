@@ -7,7 +7,8 @@
 # - `swx build --all` builds every package; `swx test --all --selective` runs every test
 #   target once and nothing the second time;
 # - `swx cache push --all`, then `pull --all` into an empty store, lets every package resolve
-#   without git.
+#   without git;
+# - `.swx/workspace.json` excludes a package from `--all`.
 #
 #   Scripts/check-monorepo.sh [swx-binary]
 set -euo pipefail
@@ -104,3 +105,12 @@ done
 spawns="$(SWX_TRACE=1 "$swx" package resolve --all --package-path "$repo" 2>&1 | grep -c 'spawn git' || true)"
 [ "$spawns" = "0" ] || fail "resolve --all after pull --all ran git $spawns times"
 echo "cache push --all and pull --all restore every package without git"
+
+# MARK: .swx/workspace.json narrows --all
+
+mkdir -p "$repo/.swx"
+echo '{"exclude": ["Packages/Core"]}' > "$repo/.swx/workspace.json"
+narrowed="$("$swx" package resolve --all --package-path "$repo")"
+[[ "$narrowed" == *"2 of 2 packages succeeded"* ]] || fail ".swx/workspace.json wasn't honoured: $narrowed"
+! grep -q "^Packages/Core:" <<<"$narrowed" || fail "an excluded package was resolved"
+echo ".swx/workspace.json excludes packages from --all"
