@@ -1,5 +1,11 @@
 import Foundation
 
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// Small file-system helpers used by the shell layers.
 public enum FileSystem {
     private static let separator = "/"
@@ -96,6 +102,14 @@ public enum FileSystem {
         } catch where Self.exists(destination) {
             // Another process published the same content-addressed entry; ours is redundant.
             try? Self.removeTree(source)
+        }
+    }
+
+    /// Renames `source` over `destination` in one step (`rename(2)`), replacing a file already
+    /// there. Foundation's `replaceItemAt` needs an existing destination on Linux.
+    public static func replace(_ destination: URL, with source: URL) throws {
+        guard rename(source.path, destination.path) == 0 else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: destination.path, NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)])
         }
     }
 

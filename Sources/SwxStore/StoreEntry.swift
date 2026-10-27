@@ -53,6 +53,9 @@ extension Store {
     private enum Tar {
         static let executable = "tar"
         static let create = "-czf"
+        /// pax keeps sub-second mtimes (GNU tar's default format rounds them to seconds), and
+        /// SwiftPM's incremental builds compare mtimes exactly.
+        static let preciseFormat = "--format=pax"
         static let extract = "-xzf"
         static let directory = "-C"
         static let everything = "."
@@ -83,7 +86,7 @@ extension Store {
         guard entry.isDirectory else { return path }
 
         let archive = try self.makeTemporaryDirectory().appendingPathComponent(Self.archiveName)
-        try await ProcessRunner.run([Tar.executable, Tar.create, archive.path, Tar.directory, path.path, Tar.everything])
+        try await ProcessRunner.run([Tar.executable, Tar.preciseFormat, Tar.create, archive.path, Tar.directory, path.path, Tar.everything])
         return archive
     }
 

@@ -69,6 +69,8 @@ extension Workspace {
     private enum Tar {
         static let executable = "tar"
         static let create = "-czf"
+        /// Sub-second mtimes survive (see StoreEntry).
+        static let preciseFormat = "--format=pax"
         static let extract = "-xzf"
         static let directory = "-C"
         static let exclude = "--exclude"
@@ -133,7 +135,7 @@ extension Workspace {
         defer { try? FileSystem.removeTree(scratch) }
         let archive = scratch.appendingPathComponent(UUID().uuidString)
         let exclusions = BuildCache.excluded.flatMap { [Tar.exclude, Tar.memberPrefix + $0] }
-        try await ProcessRunner.run([Tar.executable, Tar.create, archive.path] + exclusions + [Tar.directory, buildDirectory.path, Tar.everything])
+        try await ProcessRunner.run([Tar.executable, Tar.preciseFormat, Tar.create, archive.path] + exclusions + [Tar.directory, buildDirectory.path, Tar.everything])
         for match in missing {
             try await remote.upload(archive, as: keys.remoteKey(match))
         }

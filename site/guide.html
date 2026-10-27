@@ -196,7 +196,9 @@ swx run MyTool --flag</pre>
                 these files, else one built with the same <code>Package.resolved</code>, whose dependencies are
                 still current; it never overwrites an existing build. A release build of a package using
                 swift-argument-parser, swift-collections and swift-nio took 23 s cold and 3 s after a pull into an
-                empty store.
+                empty store. SwiftPM's native build system recompiles dependencies' C files after a restore (it
+                tracks their files' identity), but reuses their Swift: 11 s cold and 2 s restored for the sample
+                package.
             </p>
 <pre><span class="c"># CI: restore, resolve offline, test what changed, share the results</span>
 export SWX_REMOTE_CACHE=s3://my-bucket/swx

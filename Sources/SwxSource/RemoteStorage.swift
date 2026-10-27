@@ -97,7 +97,7 @@ struct DirectoryStorage: RemoteStorage {
         try FileSystem.createDirectory(destination.deletingLastPathComponent())
         let staging = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString)")
         try FileManager.default.copyItem(at: file, to: staging)
-        _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
+        try FileSystem.replace(destination, with: staging)
     }
 }
 

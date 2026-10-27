@@ -59,7 +59,9 @@ fi
 echo "http: a wrong token is refused"
 
 # Build outputs: built and pushed from one store, restored into an empty one at the same path.
-# After the restore, building may recompile the package's own target, never a dependency.
+# After the restore, building may recompile the package's own target, never a dependency's Swift.
+# (SwiftPM's native build system reruns C compiles whenever file identities change, so those are
+# counted, not failed.)
 export SWX_CACHE_DIR="$work/store-push"
 remote="file://$work/remote-directory"
 (cd "$work/package" && swift build >/dev/null && "$swx" cache push --build --remote "$remote" >/dev/null)
@@ -72,6 +74,9 @@ touch "$work/restored"
 (cd "$work/package" && swift build >/dev/null)
 objects="$(find "$work/package/.build" -name '*.o' | wc -l | tr -d ' ')"
 [ "$objects" -gt 0 ] || { echo "build: no object files to compare"; exit 1; }
+readonly c_family='\.(c|m|mm|cc|cpp|cxx|s|S)\.o$'
 rebuilt="$(find "$work/package/.build" -name '*.o' -newer "$work/restored" | grep -v '/App' || true)"
-[ -z "$rebuilt" ] || { echo "build: dependencies rebuilt after a restore:"; echo "$rebuilt" | head; exit 1; }
-echo "build: restored $objects object files; only the package's own target rebuilt"
+rebuilt_swift="$(echo "$rebuilt" | grep -Ev "$c_family" | grep . || true)"
+rebuilt_c="$(echo "$rebuilt" | grep -Ec "$c_family" || true)"
+[ -z "$rebuilt_swift" ] || { echo "build: dependencies' Swift rebuilt after a restore:"; echo "$rebuilt_swift" | head; exit 1; }
+echo "build: restored $objects object files; no dependency's Swift rebuilt ($rebuilt_c C objects recompiled)"
