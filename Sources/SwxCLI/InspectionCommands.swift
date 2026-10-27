@@ -8,6 +8,9 @@ enum ReportFormat: String, ExpressibleByArgument, CaseIterable {
     case json
 }
 
+extension OutdatedThreshold: ExpressibleByArgument {}
+extension AdvisorySeverity: ExpressibleByArgument {}
+
 /// `swx why <package>`: who depends on a package, up to the root.
 struct Why: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -47,15 +50,29 @@ struct Outdated: AsyncParsableCommand {
     @Flag(help: "List every dependency, not only outdated ones.")
     var all = false
 
+    @Option(help: "A dependency to leave out of the report (repeatable; adds to .swx/policy.json).")
+    var ignore: [String] = []
+
+    @Option(help: "Fail when a dependency is behind: never, wanted (the requirements allow newer) or latest (any newer release). Overrides .swx/policy.json.")
+    var failOn: OutdatedThreshold?
+
     func run() async throws {
         try await CommandSupport.prepareToolchain(for: self.global)
         let workspace = self.global.makeWorkspace()
         try await GraphSupport.resolve(workspace)
 
+        // The policy file, with the flags on top.
+        var policy = try CommandSupport.reportingErrors { try workspace.policy() }.outdated
+        policy.ignore.formUnion(self.ignore.map { $0.lowercased() })
+        policy.failOn = self.failOn ?? policy.failOn
+
+        let entries = policy.reported(try await CommandSupport.reportingErrors { try await workspace.outdated() })
         let format: OutdatedFormat = self.format == .json ? .json : .text
         let scope: OutdatedScope = self.all ? .all : .outdated
-        let text = try await CommandSupport.reportingErrors { try await workspace.outdated(format: format, scope: scope) }
-        try GraphSupport.emit(text, to: nil)
+        try GraphSupport.emit(entries.render(format, scope: scope), to: nil)
+        if policy.fails(entries) {
+            throw ExitCode.failure
+        }
     }
 }
 
@@ -70,14 +87,25 @@ struct Audit: AsyncParsableCommand {
     @Option(help: "text or json.")
     var format: ReportFormat = .text
 
+    @Option(help: "An advisory id or alias to accept (repeatable; adds to .swx/policy.json).")
+    var ignore: [String] = []
+
+    @Option(help: "The mildest severity that fails: low, moderate, high or critical. Unrated advisories always fail. Overrides .swx/policy.json.")
+    var failOn: AdvisorySeverity?
+
     func run() async throws {
         try await CommandSupport.prepareToolchain(for: self.global)
         let workspace = self.global.makeWorkspace()
         try await GraphSupport.resolve(workspace)
 
-        let report = try await CommandSupport.reportingErrors { try await workspace.audit() }
+        // The policy file, with the flags on top.
+        var policy = try CommandSupport.reportingErrors { try workspace.policy() }.audit
+        policy.ignore.formUnion(self.ignore)
+        policy.failOn = self.failOn ?? policy.failOn
+
+        let report = try await CommandSupport.reportingErrors { try await workspace.audit(policy: policy) }
         try GraphSupport.emit(report.render(self.format == .json ? .json : .text), to: nil)
-        if report.isVulnerable {
+        if report.failed {
             throw ExitCode.failure
         }
     }

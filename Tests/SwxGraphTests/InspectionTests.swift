@@ -163,3 +163,47 @@ struct OutdatedTests {
         """)
     }
 }
+
+struct PolicyTests {
+    private static func advisory(_ id: String, _ severity: String?, aliases: [String] = []) -> Advisory {
+        Advisory(id: id, aliases: aliases, summary: "s", severity: severity, fixedIn: [])
+    }
+
+    private static let finding = AuditFinding(package: "swift-nio-http2", version: "1.19.1", advisories: [
+        advisory("GHSA-a", "MODERATE"),
+        advisory("GHSA-b", "HIGH", aliases: ["CVE-2023-1"]),
+    ])
+
+    /// Severity thresholds: at or above fails, below passes.
+    @Test func failsAtTheThreshold() {
+        #expect(AuditReport(findings: [Self.finding], checked: 1, unchecked: []).failed)
+        #expect(AuditReport(findings: [Self.finding], checked: 1, unchecked: [], policy: AuditPolicy(failOn: .high)).failed)
+        #expect(!AuditReport(findings: [Self.finding], checked: 1, unchecked: [], policy: AuditPolicy(failOn: .critical)).failed)
+        #expect(AdvisorySeverity(rating: "MEDIUM") == .moderate)
+    }
+
+    /// Unrated advisories fail whatever the threshold.
+    @Test func unratedAlwaysFails() {
+        let unrated = AuditFinding(package: "p", version: "1.0.0", advisories: [Self.advisory("GHSA-c", nil)])
+        #expect(AuditReport(findings: [unrated], checked: 1, unchecked: [], policy: AuditPolicy(failOn: .critical)).failed)
+    }
+
+    /// Ignored advisories (by id or alias) leave the findings but stay named in the report.
+    @Test func ignoresByIdOrAlias() {
+        let report = AuditReport(findings: [Self.finding], checked: 1, unchecked: [], policy: AuditPolicy(ignore: ["GHSA-a", "CVE-2023-1"]))
+        #expect(report.findings.isEmpty)
+        #expect(!report.failed)
+        #expect(report.ignored == [IgnoredAdvisory(package: "swift-nio-http2", id: "GHSA-a"), IgnoredAdvisory(package: "swift-nio-http2", id: "GHSA-b")])
+        #expect(report.render(.text).contains("ignored by policy: GHSA-a (swift-nio-http2), GHSA-b (swift-nio-http2)"))
+    }
+
+    @Test func outdatedThresholds() {
+        let behind = OutdatedEntry(package: "a", current: "1.0.0", wanted: "1.2.0", latest: "1.2.0", dependents: ["root"])
+        let capped = OutdatedEntry(package: "b", current: "1.0.0", wanted: "1.0.0", latest: "2.0.0", dependents: ["root"])
+        #expect(!OutdatedPolicy().fails([behind, capped]))
+        #expect(OutdatedPolicy(failOn: .wanted).fails([behind]))
+        #expect(!OutdatedPolicy(failOn: .wanted).fails([capped]))
+        #expect(OutdatedPolicy(failOn: .latest).fails([capped]))
+        #expect(OutdatedPolicy(ignore: ["a"]).reported([behind, capped]) == [capped])
+    }
+}

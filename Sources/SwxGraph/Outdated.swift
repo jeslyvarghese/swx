@@ -16,6 +16,45 @@ public enum OutdatedScope: Sendable {
     case all
 }
 
+/// When `swx outdated` fails.
+public enum OutdatedThreshold: String, Sendable, CaseIterable, Codable {
+    /// Report only.
+    case never
+    /// A newer version the requirements allow: the lockfile is behind (`swx package update`).
+    case wanted
+    /// Any newer release, allowed or not (`swx upgrade`).
+    case latest
+}
+
+/// Which dependencies `swx outdated` leaves out, and when it fails.
+public struct OutdatedPolicy: Sendable, Equatable {
+    /// Package identities not to report.
+    public var ignore: Set<String>
+    public var failOn: OutdatedThreshold
+
+    public init(ignore: Set<String> = [], failOn: OutdatedThreshold = .never) {
+        self.ignore = ignore
+        self.failOn = failOn
+    }
+
+    /// The dependencies the policy reports.
+    public func reported(_ entries: [OutdatedEntry]) -> [OutdatedEntry] {
+        entries.filter { !self.ignore.contains($0.package) }
+    }
+
+    /// Whether these (reported) entries fail the check.
+    public func fails(_ entries: [OutdatedEntry]) -> Bool {
+        switch self.failOn {
+        case .never:
+            return false
+        case .wanted:
+            return entries.contains(where: \.isBehindWanted)
+        case .latest:
+            return entries.contains(where: \.isOutdated)
+        }
+    }
+}
+
 /// One dependency's versions: what is pinned, what the requirements allow, what exists.
 public struct OutdatedEntry: Sendable, Equatable, Encodable {
     public let package: String
@@ -32,6 +71,12 @@ public struct OutdatedEntry: Sendable, Equatable, Encodable {
     public var isOutdated: Bool {
         guard let latest else { return false }
         return latest != self.current
+    }
+
+    /// The requirements allow a newer version than the pinned one.
+    public var isBehindWanted: Bool {
+        guard let wanted else { return false }
+        return wanted != self.current
     }
 }
 
@@ -108,7 +153,7 @@ extension [OutdatedEntry] {
 
     private static func table(_ entries: [OutdatedEntry], total: Int, outdated: Int) -> String {
         let dependencies = total == 1 ? "1 dependency" : "\(total) dependencies"
-        let updatable = entries.filter { $0.wanted != nil && $0.wanted != $0.current }.count
+        let updatable = entries.filter(\.isBehindWanted).count
         let advice = updatable > 0
             ? "`swx package update` moves \(updatable) to Wanted"
             : "newer ones need wider requirements in Package.swift"

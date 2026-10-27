@@ -20,6 +20,54 @@ public struct AuditFinding: Sendable, Equatable, Encodable {
     }
 }
 
+/// GitHub's advisory severities, mildest first.
+public enum AdvisorySeverity: String, Sendable, CaseIterable, Comparable, Codable {
+    case low
+    case moderate
+    case high
+    case critical
+
+    /// OSV spells GitHub's ratings in capitals; some databases say MEDIUM for MODERATE.
+    private static let medium = "medium"
+
+    public init?(rating: String) {
+        let lowered = rating.lowercased()
+        self.init(rawValue: lowered == Self.medium ? Self.moderate.rawValue : lowered)
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        (Self.allCases.firstIndex(of: lhs) ?? Self.allCases.startIndex) < (Self.allCases.firstIndex(of: rhs) ?? Self.allCases.startIndex)
+    }
+}
+
+/// Which advisories `swx audit` accepts: ignored ones, and those below a severity.
+public struct AuditPolicy: Sendable, Equatable {
+    /// Advisory ids or aliases (`GHSA-…`, `CVE-…`) not to report.
+    public var ignore: Set<String>
+    /// The mildest severity that fails the audit. Unrated advisories always fail.
+    public var failOn: AdvisorySeverity
+
+    public init(ignore: Set<String> = [], failOn: AdvisorySeverity = .low) {
+        self.ignore = ignore
+        self.failOn = failOn
+    }
+
+    func ignores(_ advisory: Advisory) -> Bool {
+        self.ignore.contains(advisory.id) || advisory.aliases.contains(where: self.ignore.contains)
+    }
+
+    func fails(_ advisory: Advisory) -> Bool {
+        guard let severity = advisory.severity.flatMap(AdvisorySeverity.init(rating:)) else { return true }
+        return severity >= self.failOn
+    }
+}
+
+/// An advisory the policy ignores, still named in the report so it isn't forgotten.
+public struct IgnoredAdvisory: Sendable, Equatable, Encodable {
+    public let package: String
+    public let id: String
+}
+
 /// `swx audit`'s answer.
 public struct AuditReport: Sendable, Equatable, Encodable {
     public let findings: [AuditFinding]
@@ -27,11 +75,26 @@ public struct AuditReport: Sendable, Equatable, Encodable {
     public let checked: Int
     /// Packages OSV can't be asked about: branches, revisions, paths, registry packages.
     public let unchecked: [String]
+    public let ignored: [IgnoredAdvisory]
+    /// Whether any reported advisory is as severe as the policy's threshold.
+    public let failed: Bool
 
-    public init(findings: [AuditFinding], checked: Int, unchecked: [String]) {
-        self.findings = findings
+    public init(findings: [AuditFinding], checked: Int, unchecked: [String], policy: AuditPolicy = AuditPolicy()) {
+        var kept: [AuditFinding] = []
+        var ignored: [IgnoredAdvisory] = []
+        for finding in findings {
+            let skipped = finding.advisories.filter(policy.ignores)
+            let reported = finding.advisories.filter { !policy.ignores($0) }
+            ignored += skipped.map { IgnoredAdvisory(package: finding.package, id: $0.id) }
+            if !reported.isEmpty {
+                kept.append(AuditFinding(package: finding.package, version: finding.version, advisories: reported))
+            }
+        }
+        self.findings = kept
         self.checked = checked
         self.unchecked = unchecked
+        self.ignored = ignored
+        self.failed = kept.contains { $0.advisories.contains(where: policy.fails) }
     }
 
     public var isVulnerable: Bool {
@@ -80,6 +143,12 @@ public struct AuditReport: Sendable, Equatable, Encodable {
             : "\(count) known \(count == 1 ? "vulnerability" : "vulnerabilities") in \(self.findings.count) of \(packages) (OSV.dev)\n"
         if !self.unchecked.isEmpty {
             output += "not checked (no released version on a git host): \(self.unchecked.joined(separator: ", "))\n"
+        }
+        if !self.ignored.isEmpty {
+            output += "ignored by policy: \(self.ignored.map { "\($0.id) (\($0.package))" }.joined(separator: ", "))\n"
+        }
+        if self.isVulnerable && !self.failed {
+            output += "all below the policy's failing severity\n"
         }
         return output
     }

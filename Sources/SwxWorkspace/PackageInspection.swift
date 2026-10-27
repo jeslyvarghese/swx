@@ -99,7 +99,7 @@ public typealias OutdatedScope = SwxGraph.OutdatedScope
 
 extension Workspace {
     /// Pinned, wanted and latest versions of every dependency. Expects a resolved workspace.
-    public func outdated(format: OutdatedFormat, scope: OutdatedScope) async throws -> String {
+    public func outdated() async throws -> [OutdatedEntry] {
         let graph = try await self.packageGraph()
         let root = try await self.rootContext()
         let toolchain = try await Toolchain.detect(store: self.store)
@@ -126,10 +126,9 @@ extension Workspace {
             return try await group.reduce(into: [String: [Version]]()) { $0[$1.0] = $1.1 }
         }
 
-        let entries = dependencies.sorted { $0.identity < $1.identity }.map { package in
+        return dependencies.sorted { $0.identity < $1.identity }.map { package in
             graph.outdatedEntry(for: package, available: available[package.identity] ?? [], requirements: requirements[package.identity] ?? [])
         }
-        return entries.render(format, scope: scope)
     }
 }
 
@@ -140,8 +139,8 @@ public typealias AuditReport = SwxGraph.AuditReport
 
 extension Workspace {
     /// Known vulnerabilities in the pinned versions of every dependency, from OSV.dev (GitHub's
-    /// advisory database). Expects a resolved workspace.
-    public func audit() async throws -> AuditReport {
+    /// advisory database), with the policy's ignores applied. Expects a resolved workspace.
+    public func audit(policy: AuditPolicy) async throws -> AuditReport {
         let graph = try await self.packageGraph()
         let dependencies = graph.reachablePackages.filter { $0.role == .dependency }.sorted { $0.identity < $1.identity }
 
@@ -177,7 +176,8 @@ extension Workspace {
                 AuditFinding(package: checkable[index].package.identity, version: checkable[index].version, advisories: advisories)
             },
             checked: checkable.count,
-            unchecked: unchecked
+            unchecked: unchecked,
+            policy: policy
         )
     }
 
