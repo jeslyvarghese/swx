@@ -70,7 +70,10 @@ struct StoreEntryTests {
         try await destination.unpack(.sourceTree(revision: "r1"), from: archive)
         let copied = destination.localPath(of: .sourceTree(revision: "r1")).appendingPathComponent("Sources/x.swift")
         #expect(try String(contentsOf: copied, encoding: .utf8) == "let x = 1\n")
-        #expect(!FileManager.default.isWritableFile(atPath: copied.path))
+        // Check the mode bits: CI's Linux container runs as root, for whom every file is writable.
+        let mode = try #require(try FileManager.default.attributesOfItem(atPath: copied.path)[.posixPermissions] as? Int)
+        let writeBits = 0o222
+        #expect(mode & writeBits == 0)
 
         // Unpacked trees are read-only; make them writable again so the test can clean up.
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: copied.deletingLastPathComponent().path)

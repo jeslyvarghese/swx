@@ -8,7 +8,8 @@ struct ProcessRunnerTests {
     /// still running while the rest of the pipe was read) only spliced output under heavy load.
     @Test func keepsLargeOutputInOrder() async throws {
         let lines = 60_000
-        let script = "import sys\nfor i in range(\(lines)):\n    print(i)\n    if i % 500 == 0: print(i, file=sys.stderr)"
+        let stderrEvery = 500
+        let script = "BEGIN { for (i = 0; i < \(lines); i++) { print i; if (i % \(stderrEvery) == 0) print i > \"/dev/stderr\" } }"
         let expected = Data((0..<lines).map { "\($0)\n" }.joined().utf8)
         let concurrent = 16
         let rounds = 12
@@ -16,7 +17,7 @@ struct ProcessRunnerTests {
         for _ in 0..<rounds {
             let outputs = try await withThrowingTaskGroup(of: Data.self) { group in
                 for _ in 0..<concurrent {
-                    group.addTask { try await ProcessRunner.run(["python3", "-I", "-c", script]).standardOutput }
+                    group.addTask { try await ProcessRunner.run(["awk", script]).standardOutput }
                 }
                 return try await group.reduce(into: [Data]()) { $0.append($1) }
             }
