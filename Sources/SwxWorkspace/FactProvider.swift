@@ -39,6 +39,8 @@ actor FactProvider {
     /// Upper bound on speculative manifest loads, so a pathological graph can't run away.
     private static let speculationLimit = 256
     private var speculations = 0
+    /// Packages whose likely manifest was already read over HTTP for hints.
+    private var hinted: Set<PackageIdentity> = []
 
     private struct PackageVersionKey: Hashable {
         let package: PackageIdentity
@@ -134,16 +136,39 @@ actor FactProvider {
     private func speculateManifest(of package: PackageReference, requirement: VersionRequirement, tagged: [TaggedVersion]) {
         guard self.speculations < Self.speculationLimit else { return }
 
-        let candidate: Version?
-        if let pinned = self.preferred[package.identity], requirement.contains(pinned), tagged.contains(where: { $0.version == pinned }) {
-            candidate = pinned
+        let candidate: TaggedVersion?
+        if let pinned = self.preferred[package.identity], requirement.contains(pinned), let tag = tagged.first(where: { $0.version == pinned }) {
+            candidate = tag
         } else {
-            candidate = tagged.last { requirement.contains($0.version) }?.version
+            candidate = tagged.last { requirement.contains($0.version) }
         }
         guard let candidate else { return }
 
         self.speculations += 1
-        _ = self.dependenciesTask(for: package, at: candidate)
+        _ = self.dependenciesTask(for: package, at: candidate.version)
+        self.hint(package, revision: candidate.revision)
+    }
+
+    /// Reads the candidate's manifest over HTTP (GitHub) and starts on its dependencies: their
+    /// tag lists and clones then overlap with this package's clone instead of following it.
+    /// Nothing the solver sees comes from here.
+    private func hint(_ package: PackageReference, revision: String) {
+        guard ManifestHints.isEnabled, case .remoteSourceControl(let url) = package.kind, self.hinted.insert(package.identity).inserted else { return }
+        let environment = CompilationEnvironment.host(compilerVersion: self.toolchain.toolsVersion)
+        Task { [loader] in
+            guard let contents = await ManifestHints.manifest(url: url, revision: revision) else { return }
+
+            // Declarative manifests parse at once. Others start compiling now: evaluations are
+            // cached by content, and git serves these same bytes when resolution reads them.
+            var parsed = StaticManifestParser.parse(contents, environment: environment)
+            if parsed == nil {
+                parsed = try? await loader.load(contents: contents)
+            }
+            guard let manifest = parsed else { return }
+            Trace.event("hint \(package.identity): \(manifest.dependencies.count) dependencies")
+            let declarations = manifest.requiredDependencies(role: .dependency).map { self.mirrors.effective($0.declaration) }
+            self.speculate(on: declarations)
+        }
     }
 
     /// Packages whose versions come from tags or a registry (not path dependencies).

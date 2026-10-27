@@ -34,3 +34,14 @@ struct RegistryPublishingTests {
         #expect(throws: SourceError.self) { try RegistrySigner(privateKey: Data([1, 2, 3]), chain: [Data([4])]) }
     }
 }
+
+struct ManifestHintTests {
+    /// GitHub repositories map to their raw files; anything else gets no hint.
+    @Test func mapsGitHubURLsToRawManifests() {
+        #expect(ManifestHints.rawURL(url: "https://github.com/apple/swift-nio.git", revision: "abc")?.absoluteString == "https://raw.githubusercontent.com/apple/swift-nio/abc/Package.swift")
+        #expect(ManifestHints.rawURL(url: "https://github.com/apple/swift-nio", revision: "abc")?.absoluteString == "https://raw.githubusercontent.com/apple/swift-nio/abc/Package.swift")
+        #expect(ManifestHints.rawURL(url: "https://gitlab.com/a/b.git", revision: "abc") == nil)
+        #expect(ManifestHints.rawURL(url: "git@github.com:apple/swift-nio.git", revision: "abc") == nil)
+        #expect(ManifestHints.rawURL(url: "https://github.com/apple", revision: "abc") == nil)
+    }
+}

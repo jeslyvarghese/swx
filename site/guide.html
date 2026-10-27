@@ -393,6 +393,7 @@ import ArgumentParser</pre>
                         <tr><td><code>SWX_TRACE=1</code></td><td>A timestamped timeline of every subprocess.</td></tr>
                         <tr><td><code>SWX_STATIC_MANIFESTS=0</code></td><td>Always evaluate manifests with the compiler.</td></tr>
                         <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>
+                        <tr><td><code>SWX_MANIFEST_HINTS=0</code></td><td>Don't read GitHub packages' likely manifests over HTTP to start on their dependencies early (resolution reads every manifest from git either way).</td></tr>
                         <tr><td><code>SWX_REMOTE_CACHE</code></td><td>The remote cache for <code>swx cache push|pull</code>.</td></tr>
                         <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache; <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
                         <tr><td><code>SWX_DOWNLOAD_URL</code></td><td>A mirror of the release assets, for the install script and <code>swx self update --version</code>.</td></tr>
