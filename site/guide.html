@@ -424,7 +424,7 @@ import ArgumentParser</pre>
 Scripts/compare-registry-signing.sh             <span class="c"># signed registry releases: trusted, untrusted, tampered</span>
 Scripts/compare-xcode-apps.sh                   <span class="c"># an app + widget + watch app project vs xcodebuild</span>
 Scripts/check-manifest-edits.sh                 <span class="c"># add, remove, upgrade, each resolved like SwiftPM</span>
-Scripts/compare-corpus.sh &lt;dir&gt;                 <span class="c"># 206 popular packages, each resolved by both</span>
+Scripts/compare-corpus.sh &lt;dir&gt;                 <span class="c"># 206 popular packages: 200 identical, 6 refused by both</span>
 Scripts/compare-registry-publish.sh             <span class="c"># swx publish vs swift package-registry publish</span>
 Scripts/check-monorepo.sh                       <span class="c"># --all on a monorepo, each package vs SwiftPM</span>
 swx debug manifest-parity --cache-path &lt;dir&gt;    <span class="c"># the static parser vs dump-package over a corpus</span></pre>
