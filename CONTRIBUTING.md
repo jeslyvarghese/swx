@@ -58,6 +58,7 @@ swift test                                            # 190 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-lock-check.sh                         # resolve --check and resolve vs SwiftPM, lockfiles v2 and v3
+Scripts/compare-local-artifacts.sh                    # local XCFrameworks and zips vs SwiftPM: state and extracted files
 Scripts/check-remote-cache.sh                         # swx cache push/pull through a directory and an HTTP server, and --build
 Scripts/check-manifest-edits.sh                       # add, remove and upgrade, each resolved like SwiftPM
 Scripts/check-cache-prune.sh [swx] --self-update      # cache size/prune (store and remote), self update

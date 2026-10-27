@@ -405,7 +405,7 @@ import ArgumentParser</pre>
                 <li><b>Submodules and Git LFS:</b> checked out as SwiftPM checks them out (LFS needs <code>git-lfs</code>, as SwiftPM does).</li>
                 <li><b>Registries:</b> <code>registries.json</code>, SwiftPM's credential lookup (environment, Keychain, <code>.netrc</code>), checksums and trust-on-first-use fingerprints, SE-0391 signatures, and <code>--replace-scm-with-registry</code>.</li>
                 <li><b>Tag fingerprints:</b> the commit behind each tag is recorded in SwiftPM's store, and a tag that moves is refused.</li>
-                <li><b>Binary targets:</b> XCFrameworks, artifact bundles and <code>.artifactbundleindex</code>, downloaded and unzipped once per machine.</li>
+                <li><b>Binary targets:</b> XCFrameworks, artifact bundles and <code>.artifactbundleindex</code>, downloaded and unzipped once per machine; local ones used in place, and local zips extracted and recorded with their checksum. A local zip that changes while the lockfile and checkouts stay current is picked up by the next <code>swift package resolve</code>, not by swx's no-op.</li>
                 <li><b>Manifests:</b> 0 disagreements with <code>dump-package</code> over a 364-manifest corpus, and SwiftPM's tools-version rules, including that a version below 6.0 must be on the first line.</li>
                 <li><b>Publishing:</b> the archive, signatures and request of <code>swift package-registry publish</code>.</li>
                 <li><b>Xcode:</b> projects, workspaces and root package folders, with the registries and mirrors Xcode keeps in <code>xcshareddata</code>.</li>

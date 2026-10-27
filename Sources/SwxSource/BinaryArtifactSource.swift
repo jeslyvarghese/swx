@@ -147,7 +147,25 @@ public actor BinaryArtifactSource {
         guard actual == checksum else {
             throw SourceError(description: "checksum of \(url) is \(actual), but the manifest expects \(checksum)")
         }
+        return try await Self.publish(archive, checksum: checksum, staging: staging, store: store)
+    }
 
+    /// A local binary target's zip, extracted into the store under its checksum (which SwiftPM
+    /// records for it), so an unchanged archive is extracted once per machine.
+    public func tree(localArchive archive: URL) async throws -> (tree: URL, checksum: String) {
+        let checksum = try ContentHash.sha256(fileAt: archive)
+        let destination = self.store.artifactPath(checksum: checksum)
+        defer { self.store.markUsed(destination) }
+        if FileSystem.isDirectory(destination) {
+            return (destination, checksum)
+        }
+        let staging = try self.store.makeTemporaryDirectory()
+        defer { try? FileSystem.removeTree(staging) }
+        return (try await Self.publish(archive, checksum: checksum, staging: staging, store: self.store), checksum)
+    }
+
+    /// Extracts a verified archive and publishes it in the store.
+    private static func publish(_ archive: URL, checksum: String, staging: URL, store: Store) async throws -> URL {
         // Extract, refuse links that point outside the archive, then drop a wrapper directory.
         let extracted = staging.appendingPathComponent(Self.extractDirectory, isDirectory: true)
         try await ArchiveExtraction.unzip(archive, into: extracted)

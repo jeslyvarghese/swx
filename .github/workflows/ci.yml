@@ -28,6 +28,8 @@ jobs:
           Scripts/compare-graph.sh .build/release/swx
       - name: Lockfile checks against SwiftPM
         run: Scripts/compare-lock-check.sh .build/release/swx
+      - name: Local binary targets against SwiftPM
+        run: Scripts/compare-local-artifacts.sh .build/release/swx
       - name: Remote cache round trips, build outputs included
         run: Scripts/check-remote-cache.sh .build/release/swx
       - name: Store and remote pruning, self update

@@ -74,7 +74,7 @@ struct ArtifactInstaller: Sendable {
                 let url = self.mirrors.location(declaredURL)
                 outcomes[key] = try await self.install(key: key, package: package, packageName: manifest.name, url: url, checksum: checksum, change: change)
             case .local(let path)?:
-                outcomes[key] = try self.recordLocal(key: key, package: package, packageName: manifest.name, path: path, in: directory)
+                outcomes[key] = try await self.recordLocal(key: key, package: package, packageName: manifest.name, path: path, in: directory)
             case nil:
                 continue
             }
@@ -84,11 +84,12 @@ struct ArtifactInstaller: Sendable {
 
     /// SwiftPM uses a local XCFramework or artifact bundle where it is, and records it as a
     /// `local` artifact at the artifact it finds there; a missing one fails the resolve, as in
-    /// SwiftPM. Local zip archives are extracted by SwiftPM itself.
-    private func recordLocal(key: ManagedArtifact.Key, package: PackageReference, packageName: String, path: String, in directory: URL) throws -> ArtifactOutcome {
+    /// SwiftPM. A local zip is extracted into `artifacts/<package>/<target>` and recorded with its
+    /// checksum.
+    private func recordLocal(key: ManagedArtifact.Key, package: PackageReference, packageName: String, path: String, in directory: URL) async throws -> ArtifactOutcome {
         let location = URL(fileURLWithPath: FileSystem.normalize(path, relativeTo: directory.path))
-        guard location.pathExtension.lowercased() != Self.zipExtension else {
-            return .leftToSwiftPM(reason: "a local archive, which SwiftPM extracts")
+        if location.pathExtension.lowercased() == Self.zipExtension {
+            return try await self.installLocalArchive(location, key: key, package: package, packageName: packageName)
         }
         guard let derived = BinaryArtifactSource.deriveLocal(at: location) else {
             throw WorkspaceError(description: "local binary target '\(key.targetName)' at '\(location.path)' does not contain a binary artifact.")
@@ -149,6 +150,36 @@ struct ArtifactInstaller: Sendable {
             packageName: packageName,
             targetName: key.targetName,
             source: .remote(url: url, checksum: checksum),
+            path: self.pathStyle.spelling(of: path),
+            kind: Self.kind(derived.kind)
+        ))
+    }
+
+    /// SwiftPM skips an archive whose checksum is already recorded, else extracts it in place.
+    private func installLocalArchive(_ archive: URL, key: ManagedArtifact.Key, package: PackageReference, packageName: String) async throws -> ArtifactOutcome {
+        guard FileSystem.exists(archive) else {
+            throw WorkspaceError(description: "local binary target '\(key.targetName)' at '\(archive.path)' does not contain a binary artifact.")
+        }
+        let (tree, checksum) = try await self.source.tree(localArchive: archive)
+        if let recorded = self.previous.artifact(key), case .local(let recordedChecksum?)? = recorded.source,
+           recordedChecksum == checksum, FileSystem.exists(URL(fileURLWithPath: recorded.path)) {
+            return .upToDate
+        }
+
+        // The last artifact found, as SwiftPM derives it in the extracted directory.
+        guard let derived = BinaryArtifactSource.deriveLocal(at: tree) else {
+            throw WorkspaceError(description: "local archived binary target '\(key.targetName)' at '\(archive.path)' does not contain a binary artifact.")
+        }
+        let destination = self.directory(for: key)
+        try Materializer.materialize(tree, at: destination)
+        FileSystem.makeWritable(destination)
+
+        let path = derived.relativePath.isEmpty ? destination : destination.appendingPathComponent(derived.relativePath)
+        return .installed(ManagedArtifact(
+            package: package,
+            packageName: packageName,
+            targetName: key.targetName,
+            source: .local(checksum: checksum),
             path: self.pathStyle.spelling(of: path),
             kind: Self.kind(derived.kind)
         ))
