@@ -13,6 +13,8 @@ public struct ToolsVersion: Sendable, Hashable, Comparable, CustomStringConverti
     /// Manifests without a tools-version comment are treated as Swift 3.1 (SwiftPM's documented default).
     public static let v3 = ToolsVersion(3, 1, 0)
     public static let v4 = ToolsVersion(4, 0, 0)
+    /// The oldest tools version SwiftPM still loads.
+    public static let minimumSupported = Self.v4
     /// `Package.resolved` v2 is written from 5.6.
     public static let v5_6 = ToolsVersion(5, 6, 0)
     /// `Package.resolved` v3 is written above 5.9.

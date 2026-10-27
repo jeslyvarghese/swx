@@ -60,7 +60,8 @@ done
 grep -q "3 of 3 packages succeeded" "$work/resolve.out" || fail "resolve --all: $(cat "$work/resolve.out")"
 for package in "${packages[@]}"; do
     if [ -f "$work/spm/$package/Package.resolved" ]; then
-        cmp -s "$work/spm/$package/Package.resolved" "$repo/$package/Package.resolved" || fail "$package: Package.resolved differs from SwiftPM's"
+        cmp -s "$work/spm/$package/Package.resolved" "$repo/$package/Package.resolved" \
+            || { diff "$work/spm/$package/Package.resolved" "$repo/$package/Package.resolved" >&2; fail "$package: Package.resolved differs from SwiftPM's"; }
     else
         [ ! -f "$repo/$package/Package.resolved" ] || fail "$package: swx wrote a Package.resolved SwiftPM doesn't"
     fi

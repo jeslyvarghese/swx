@@ -20,44 +20,52 @@ enum AllPackages {
     }
 
     /// Runs `body` for each package, a few at a time, and prints each result under the
-    /// package's path as it finishes. Fails (after all ran) when any did.
+    /// package's path. Fails (after all ran) when any did.
     static func forEach(_ global: GlobalOptions, _ body: @escaping @Sendable (GlobalOptions) async throws -> [String]) async throws {
         let root = global.packageURL
         let packages = try Self.packages(global)
-        let failures = await withTaskGroup(of: (String, Result<[String], Error>).self) { group in
-            var pending = packages[...]
-            var failures = 0
+        // In batches: every task of a batch is added before any result is read.
+        var failures = 0
+        var batchStart = packages.startIndex
+        while batchStart < packages.endIndex {
+            let batch = packages[batchStart..<min(batchStart + Self.concurrency, packages.endIndex)]
+            batchStart = batch.endIndex
 
-            // Keep a fixed number in flight.
-            func startNext() {
-                guard let package = pending.popFirst() else { return }
-                var options = global
-                options.packagePath = package.path
-                group.addTask {
+            let results = await withTaskGroup(of: (String, PackageResult).self, returning: [(String, PackageResult)].self) { group in
+                for package in batch {
+                    var options = global
+                    options.packagePath = package.path
                     let name = PackageDiscovery.relativePath(of: package, to: root)
-                    do {
-                        return (name, .success(try await body(options)))
-                    } catch {
-                        return (name, .failure(error))
+                    group.addTask {
+                        do {
+                            // Awaited on its own line: in release builds (Swift 6.4), awaiting
+                            // inside the enum payload dropped the child's result.
+                            let lines = try await body(options)
+                            return (name, .succeeded(lines))
+                        } catch {
+                            return (name, .failed(Self.describe(error)))
+                        }
                     }
                 }
+                var results: [(String, PackageResult)] = []
+                for await result in group {
+                    results.append(result)
+                }
+                return results
             }
-            for _ in 0..<Self.concurrency {
-                startNext()
-            }
-            while let (name, result) = await group.next() {
+
+            // Each package's lines under its path, in the order they finished.
+            for (name, result) in results {
                 switch result {
-                case .success(let lines):
+                case .succeeded(let lines):
                     for line in lines {
                         print("\(name): \(line)")
                     }
-                case .failure(let error):
+                case .failed(let message):
                     failures += 1
-                    FileHandle.standardError.write(Data("\(name): error: \(Self.describe(error))\n".utf8))
+                    FileHandle.standardError.write(Data("\(name): error: \(message)\n".utf8))
                 }
-                startNext()
             }
-            return failures
         }
 
         print("\(packages.count - failures) of \(packages.count) packages succeeded")
@@ -88,6 +96,12 @@ enum AllPackages {
 
         print("\(packages.count - failed.count) of \(packages.count) packages succeeded" + (failed.isEmpty ? "" : "; failed: \(failed.joined(separator: ", "))"))
         guard failed.isEmpty else { throw ExitCode.failure }
+    }
+
+    /// One package's outcome, as plain values: the error is described in the child task.
+    private enum PackageResult: Sendable {
+        case succeeded([String])
+        case failed(String)
     }
 
     private static func describe(_ error: Error) -> String {

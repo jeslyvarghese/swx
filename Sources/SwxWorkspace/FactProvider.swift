@@ -205,6 +205,11 @@ actor FactProvider {
             // Pick the manifest SwiftPM would pick, and reject newer tools versions without evaluating.
             let contents = try await self.manifestContents(of: package, at: version)
             let declaredToolsVersion = try ToolsVersion.specification(of: contents)
+
+            // Like SwiftPM, a manifest older than 4.0 (or without a specification) fails the resolve.
+            guard declaredToolsVersion >= ToolsVersion.minimumSupported else {
+                throw WorkspaceError(description: "package '\(package.identity)' is using Swift tools version \(declaredToolsVersion) which is no longer supported; consider using '// swift-tools-version: \(self.toolchain.toolsVersion)' to specify the current tools version")
+            }
             guard declaredToolsVersion <= self.toolchain.toolsVersion else {
                 return .unavailable(reason: "requires tools version \(declaredToolsVersion), current is \(self.toolchain.toolsVersion)")
             }
