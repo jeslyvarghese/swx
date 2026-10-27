@@ -99,7 +99,9 @@ extension Store {
             return
         }
 
-        let staging = try self.makeTemporaryDirectory().appendingPathComponent(destination.lastPathComponent, isDirectory: true)
+        let scratch = try self.makeTemporaryDirectory()
+        defer { try? FileSystem.removeTree(scratch) }
+        let staging = scratch.appendingPathComponent(destination.lastPathComponent, isDirectory: true)
         try FileSystem.createDirectory(staging)
         try await ProcessRunner.run([Tar.executable, Tar.extract, file.path, Tar.directory, staging.path])
         if case .sourceTree = entry {

@@ -18,10 +18,12 @@ import SwxSystem
 /// cas/                   shared compilation cache, when the toolchain supports it
 /// index/packages.json    the Swift Package Index's package list (`swx add <name>`)
 /// tests/<hash>           test targets that passed with exactly these inputs (`swx test --selective`)
+/// used/<section>/<name>  when each entry was last used, for `swx cache prune`
+/// projects/<hash>.json   the commits and repositories each resolved project pins
 /// ```
 /// No other module knows this layout; everyone asks the store for paths.
 public struct Store: Sendable {
-    private enum Directory: String {
+    enum Directory: String, CaseIterable {
         case git
         /// Renamed from `src` when trees started including submodules, so older trees aren't reused.
         case sourceTrees = "trees"
@@ -37,6 +39,10 @@ public struct Store: Sendable {
         case index
         case tests
         case temporary = "tmp"
+        /// When each entry was last handed out (`swx cache prune`).
+        case uses = "used"
+        /// Which commits each resolved project pins (`swx cache prune`).
+        case projects
     }
 
     private enum Environment {
@@ -173,7 +179,7 @@ public struct Store: Sendable {
         self.directory(.tests).appendingPathComponent(key)
     }
 
-    private func directory(_ directory: Directory) -> URL {
+    func directory(_ directory: Directory) -> URL {
         self.root.appendingPathComponent(directory.rawValue, isDirectory: true)
     }
 }

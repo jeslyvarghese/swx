@@ -111,6 +111,7 @@ public struct ToolRunner: Sendable {
         // Cached build for this revision and toolchain?
         let directory = self.store.toolPath(name: reference.identity.description, revision: chosen.revision, toolchainKey: toolchain.key)
         let metadataURL = directory.appendingPathComponent(Layout.metadata)
+        self.store.markUsed(directory)
         if let metadata = FileSystem.readIfPresent(metadataURL).flatMap({ try? JSONDecoder().decode(Metadata.self, from: $0) }),
            requested == nil || metadata.executable == requested,
            FileSystem.exists(URL(fileURLWithPath: metadata.binary)) {
@@ -159,6 +160,7 @@ public struct ToolRunner: Sendable {
               FileSystem.exists(URL(fileURLWithPath: metadata.binary)) else {
             return nil
         }
+        self.store.markUsed(URL(fileURLWithPath: metadataPath))
         return BuiltTool(name: metadata.executable, version: version, executable: URL(fileURLWithPath: metadata.binary))
     }
 

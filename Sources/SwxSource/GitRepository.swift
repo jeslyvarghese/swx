@@ -143,7 +143,9 @@ struct GitRepository: Sendable {
 
     /// Creates the blobless bare clone, publishing it atomically.
     func clone(using store: Store) async throws {
-        let staging = try store.makeTemporaryDirectory().appendingPathComponent(self.path.lastPathComponent)
+        let scratch = try store.makeTemporaryDirectory()
+        defer { try? FileSystem.removeTree(scratch) }
+        let staging = scratch.appendingPathComponent(self.path.lastPathComponent)
         try await Self.withNetworkRetry {
             try? FileSystem.removeTree(staging)
             try await ProcessRunner.run(

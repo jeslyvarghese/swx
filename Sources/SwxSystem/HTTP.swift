@@ -102,6 +102,26 @@ public enum HTTP {
     private static let postMethod = "POST"
     private static let putMethod = "PUT"
     private static let headMethod = "HEAD"
+    private static let deleteMethod = "DELETE"
+
+    /// A DELETE whose status is returned rather than checked; retries only server and network errors.
+    public static func delete(_ url: URL, headers: [String: String]) async throws -> HTTPResponse {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            request.httpMethod = Self.deleteMethod
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (data, response) = try await Self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            return HTTPResponse(status: http.statusCode, body: data, headers: [:])
+        }
+    }
 
     /// The status of a HEAD request (existence checks); retries only server and network errors.
     public static func head(_ url: URL, headers: [String: String]) async throws -> Int {

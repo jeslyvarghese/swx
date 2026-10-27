@@ -116,6 +116,7 @@ public actor BinaryArtifactSource {
     /// The extracted archive for `checksum`, downloading and verifying it on first use.
     public func tree(url: String, checksum: String) async throws -> URL {
         let destination = self.store.artifactPath(checksum: checksum)
+        defer { self.store.markUsed(destination) }
         if FileSystem.isDirectory(destination) {
             return destination
         }

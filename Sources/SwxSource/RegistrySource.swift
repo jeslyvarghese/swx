@@ -188,6 +188,7 @@ public actor RegistrySource {
 
         let destination = self.store.registryTreePath(checksum: expected)
         let archive = self.store.registryArchivePath(checksum: expected)
+        defer { self.store.markUsed(destination) }
         if !FileSystem.isDirectory(destination) || !FileSystem.exists(archive) {
             if let running = self.treeTasks[expected] {
                 _ = try await running.value

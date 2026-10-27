@@ -40,6 +40,7 @@ extension Workspace {
         var skipped: [String] = []
         for (target, key) in keys.sorted(by: { $0.key < $1.key }) {
             if FileSystem.exists(self.store.testResultPath(key: key)) {
+                self.store.markUsed(self.store.testResultPath(key: key))
                 skipped.append(target)
             } else {
                 run.append(target)

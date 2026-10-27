@@ -75,3 +75,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes swx-*.tar.gz SHA256SUMS
+      # The repository is its own Homebrew tap: point Formula/swx.rb at the new release.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: repository
+      - name: Update the Homebrew formula
+        working-directory: repository
+        run: |
+          Scripts/homebrew-formula.sh "$GITHUB_REF_NAME" ../SHA256SUMS
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/swx.rb
+          git commit -m "Homebrew formula for $GITHUB_REF_NAME"
+          git push origin main

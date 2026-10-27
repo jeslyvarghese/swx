@@ -151,6 +151,7 @@ public actor GitSource {
     /// The immutable store tree for `revision`, exporting it on first use.
     public func sourceTree(of package: PackageReference, revision: String) async throws -> URL {
         let destination = self.store.sourceTreePath(revision: revision)
+        defer { self.store.markUsed(destination) }
         if FileSystem.isDirectory(destination) {
             return destination
         }
@@ -169,7 +170,9 @@ public actor GitSource {
             let repository = try await self.ensureRevisions([revision], of: package)
 
             // Export into staging (with submodules, like SwiftPM's checkouts), freeze it, then publish atomically.
-            let staging = try store.makeTemporaryDirectory().appendingPathComponent(revision)
+            let scratch = try store.makeTemporaryDirectory()
+            defer { try? FileSystem.removeTree(scratch) }
+            let staging = scratch.appendingPathComponent(revision)
             try await limiter.run { try await repository.export(revision: revision, to: staging) }
             try await self.exportSubmodules(of: repository, revision: revision, into: staging)
             FileSystem.makeReadOnly(staging)
@@ -245,6 +248,7 @@ public actor GitSource {
             return existing
         }
         let repository = GitRepository(url: url, path: self.store.repositoryPath(for: url, name: name))
+        self.store.markUsed(repository.path)
         let task = Task { [store, limiter] in
             if !repository.exists {
                 try await limiter.run { try await repository.clone(using: store) }

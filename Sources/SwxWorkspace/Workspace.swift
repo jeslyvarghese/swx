@@ -330,6 +330,14 @@ public struct Workspace: Sendable {
 
     public func resolve(mode: ResolveMode) async throws -> ResolveReport {
         let root = try await self.rootContext()
+        let report = try await self.resolve(mode: mode, root: root)
+
+        // Tell the store what this project pins, so `swx cache prune` keeps it.
+        self.recordUse(of: report.pins, layout: root.layout)
+        return report
+    }
+
+    private func resolve(mode: ResolveMode, root: RootContext) async throws -> ResolveReport {
         let layout = root.layout
         let originHash = root.originHash
 
@@ -381,6 +389,25 @@ public struct Workspace: Sendable {
 
         // Full resolution.
         return try await self.fullResolve(mode: mode, root: root, previousPins: previousPins, previousState: state, catalog: .remote)
+    }
+
+    /// Records the pinned commits for `swx cache prune`, and stamps their trees as used: an
+    /// up-to-date project never asks the store for them, yet still relies on them.
+    private func recordUse(of pins: [Pin], layout: Layout) {
+        var revisions: [String] = []
+        var repositories: [String] = []
+        for pin in pins {
+            guard let revision = pin.state.revision, let url = pin.package.kind.sourceControlLocation else { continue }
+            revisions.append(revision)
+            repositories.append(url)
+            self.store.markUsed(self.store.sourceTreePath(revision: revision))
+        }
+        let project = StoreProject(resolvedFile: layout.resolvedFile.standardizedFileURL.path, revisions: revisions, repositories: repositories)
+        do {
+            try self.store.recordProject(project)
+        } catch {
+            self.log(.verbose, "could not record this project in the store: \(error)")
+        }
     }
 
     /// Whether resolving would change `Package.resolved`, without writing or checking out anything.

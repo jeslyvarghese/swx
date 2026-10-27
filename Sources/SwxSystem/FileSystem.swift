@@ -113,6 +113,39 @@ public enum FileSystem {
         }
     }
 
+    /// The bytes of every regular file under `url` (or of `url` itself), symlinks not followed.
+    /// Clones share blocks on disk, so this is what the files hold, not what the disk lost.
+    public static func size(of url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        guard Self.isDirectory(url) else {
+            return Int64((try? url.resourceValues(forKeys: Set(keys)).fileSize) ?? 0)
+        }
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys) else {
+            return 0
+        }
+
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            guard let values = try? file.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
+
+    /// When `url` was last modified; `nil` when it doesn't exist.
+    public static func modificationDate(of url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// Creates `url` empty, or moves its modification date to now.
+    public static func touch(_ url: URL, at date: Date = Date()) throws {
+        guard Self.exists(url) else {
+            try Self.writeAtomically(Data(), to: url)
+            return
+        }
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    }
+
     // MARK: Permissions
 
     private enum WritePermission {

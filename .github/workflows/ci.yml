@@ -30,6 +30,8 @@ jobs:
         run: Scripts/compare-lock-check.sh .build/release/swx
       - name: Remote cache round trips, build outputs included
         run: Scripts/check-remote-cache.sh .build/release/swx
+      - name: Store and remote pruning, self update
+        run: Scripts/check-cache-prune.sh .build/release/swx --self-update
       - name: add, remove and upgrade against SwiftPM
         run: Scripts/check-manifest-edits.sh .build/release/swx
         env:
@@ -100,6 +102,8 @@ jobs:
           Scripts/compare-registry.sh .build/release/swx
       - name: Remote cache round trips, build outputs included
         run: Scripts/check-remote-cache.sh .build/release/swx
+      - name: Store and remote pruning, self update
+        run: Scripts/check-cache-prune.sh .build/release/swx --self-update
 
   # The setup action in this repository, installing a published release.
   action:
@@ -123,6 +127,16 @@ jobs:
           install-dir: ${{ runner.temp }}/swx-latest
       - name: The latest release installs
         run: '"$RUNNER_TEMP/swx-latest/swx" --version'
+      # The repository is its own tap; Formula/swx.rb names the latest release.
+      - name: Homebrew installs the formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          if ! command -v brew >/dev/null; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi
+          brew tap jeslyvarghese/swx "$GITHUB_WORKSPACE"
+          brew install jeslyvarghese/swx/swx
+          brew test jeslyvarghese/swx/swx
+          [ "$("$(brew --prefix)/bin/swift-x" --version)" = "$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/swx.rb)" ]
 
   static-linux:
     runs-on: ubuntu-24.04

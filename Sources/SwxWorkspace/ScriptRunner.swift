@@ -52,6 +52,7 @@ public struct ScriptRunner: Sendable {
         let key = ContentHash.sha256([source, configuration.rawValue, try await Toolchain.detect(store: self.store).key].joined(separator: "\u{0}"))
         let package = self.store.scriptPath(key: key)
         let marker = package.appendingPathComponent(Layout.targetName)
+        self.store.markUsed(package)
 
         // Cached: the binary path is recorded next to the package.
         if let recorded = FileSystem.readIfPresent(marker).map({ String(decoding: $0, as: UTF8.self) }), FileSystem.exists(URL(fileURLWithPath: recorded)) {
