@@ -1,0 +1,36 @@
+name: Set up swx
+description: Install swx, a fast, drop-in companion to SwiftPM, and put it on the PATH.
+author: Jesly Varghese
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  version:
+    description: A release tag such as v0.4.0, or latest.
+    default: latest
+  install-dir:
+    description: Where to put swx and swift-x.
+    default: ${{ runner.temp }}/swx/bin
+
+outputs:
+  version:
+    description: The installed swx version.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        SWX_REQUESTED_VERSION: ${{ inputs.version }}
+        SWX_INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        # The installer that ships with this action, so the action's ref pins how swx is installed.
+        if [ "$SWX_REQUESTED_VERSION" != "latest" ]; then
+          export SWX_VERSION="$SWX_REQUESTED_VERSION"
+        fi
+        sh "$GITHUB_ACTION_PATH/Scripts/install.sh"
+        echo "$SWX_INSTALL_DIR" >> "$GITHUB_PATH"
+        echo "version=$("$SWX_INSTALL_DIR/swx" --version)" >> "$GITHUB_OUTPUT"

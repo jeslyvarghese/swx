@@ -28,10 +28,10 @@ SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed free
 - **Nothing to migrate**: reads `Package.swift` as is, honours SwiftPM's flags and configuration
 - **Xcode-aware**: prepares `SourcePackages` so `xcodebuild` builds offline
 - **Apple platforms**: build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices
-- **`swx add`**: from a package name to a resolved dependency in one step, like `uv add`
+- **Editing dependencies**: `swx add` goes from a package name to a resolved dependency, like `uv add`; `remove` and `upgrade` too
 - **Dependency graphs**: `swx graph` as a tree, Graphviz, Mermaid or JSON; `show-dependencies` without SwiftPM
-- **Inspection**: `why`, `outdated`, `audit` (known vulnerabilities), `licenses`, and undeclared imports
-- **CI**: selective testing, a remote cache (S3, HTTP or a directory), and `resolve --check`
+- **Inspection**: `why`, `outdated`, `audit` (known vulnerabilities), `licenses`, and undeclared imports, with a policy file for CI
+- **CI**: a GitHub Action, selective testing, `resolve --check`, and a remote cache (S3, HTTP or a directory) for checkouts and build outputs
 - **Toolchains**: installs swift.org releases and snapshots, honours `.swift-version`
 - **Tools and scripts**: runs package executables like `uvx`, and single-file scripts with dependencies
 - **Verified**: every compatibility claim is checked against SwiftPM or Xcode in CI
@@ -42,11 +42,13 @@ To learn more, read the [user guide](https://swx.quadratic.xyz/guide.html).
 
 ```sh
 swx add swift-argument-parser            # find it, pick the newest release, add it, resolve
+swx upgrade                              # move requirements that exclude the newest releases
 swx package resolve                      # same Package.resolved as `swift package resolve`
 swx build -c release                     # resolves, then SwiftPM builds with resolution disabled
 swx graph                                # targets and the products they use, as a tree
 swx audit                                # known vulnerabilities in your pins
 swx test --selective                     # only test targets whose inputs changed
+swx cache pull --build                   # checkouts and .build from a remote cache (CI)
 swx run --platform ios HelloApp          # build, install and launch on a simulator
 swx xcode resolve --source-packages SourcePackages
 swx toolchain install 6.4

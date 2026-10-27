@@ -14,6 +14,8 @@ public struct CacheTransferReport: Sendable {
     public var present = 0
     /// Entries the sending side doesn't have.
     public var unavailable = 0
+    /// What happened to the build outputs; `nil` when they weren't asked for.
+    public var build: BuildCacheOutcome?
 }
 
 /// Which way `swx cache` copies.
@@ -29,8 +31,8 @@ extension Workspace {
     /// Copies this project's store entries between the store and a remote cache, so a fresh
     /// machine (CI) restores checkouts, binary artifacts and test results without fetching or
     /// rebuilding: source trees and manifests of every pinned commit, artifacts the manifests
-    /// declare, and the keys of `swx test --selective`.
-    public func transferCache(_ direction: CacheDirection, remote location: String) async throws -> CacheTransferReport {
+    /// declare, the keys of `swx test --selective`, and with `.include` the package's `.build`.
+    public func transferCache(_ direction: CacheDirection, remote location: String, build: BuildOutputs = .exclude) async throws -> CacheTransferReport {
         let remote = try RemoteStorages.make(location)
         var report = CacheTransferReport()
 
@@ -43,6 +45,15 @@ extension Workspace {
         let artifacts = try await self.declaredArtifacts(revisions: revisions).map { StoreEntry.artifact(checksum: $0) }
         let tests = ((try? await self.testTargetKeys(arguments: [])) ?? [:]).values.sorted().map { StoreEntry.testResult(key: $0) }
         try await self.transfer(trees + artifacts + tests, direction, remote: remote, into: &report)
+
+        // Build outputs last: on a push, the largest upload.
+        guard build == .include else { return report }
+        switch direction {
+        case .pull:
+            report.build = try await self.pullBuild(from: remote)
+        case .push:
+            report.build = try await self.pushBuild(to: remote)
+        }
         return report
     }
 
@@ -98,7 +109,7 @@ extension Workspace {
             let file = scratch.appendingPathComponent(UUID().uuidString)
             guard try await remote.download(entry.remoteKey, to: file) else { return (.unavailable, 0) }
             try await store.unpack(entry, from: file)
-            return (.transferred, Self.size(of: file))
+            return (.transferred, Self.fileSize(file))
 
         case .push:
             guard store.contains(entry) else { return (.unavailable, 0) }
@@ -110,12 +121,8 @@ extension Workspace {
                 }
             }
             try await remote.upload(file, as: entry.remoteKey)
-            return (.transferred, Self.size(of: file))
+            return (.transferred, Self.fileSize(file))
         }
-    }
-
-    private static func size(of file: URL) -> Int64 {
-        ((try? FileManager.default.attributesOfItem(atPath: file.path)[.size]) as? NSNumber)?.int64Value ?? 0
     }
 
     // MARK: What the project uses

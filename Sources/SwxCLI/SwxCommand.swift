@@ -10,9 +10,9 @@ public struct SwxCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "swx",
         abstract: "A fast, drop-in companion to SwiftPM.",
-        version: "0.3.0",
+        version: "0.4.0",
         subcommands: [
-            PackageCommand.self, Add.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
+            PackageCommand.self, Add.self, Remove.self, Upgrade.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
             Graph.self, Why.self, Outdated.self, Audit.self, Licenses.self, Inspect.self, CacheCommand.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
         ]
     )

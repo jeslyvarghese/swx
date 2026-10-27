@@ -28,8 +28,12 @@ jobs:
           Scripts/compare-graph.sh .build/release/swx
       - name: Lockfile checks against SwiftPM
         run: Scripts/compare-lock-check.sh .build/release/swx
-      - name: Remote cache round trips
+      - name: Remote cache round trips, build outputs included
         run: Scripts/check-remote-cache.sh .build/release/swx
+      - name: add, remove and upgrade against SwiftPM
+        run: Scripts/check-manifest-edits.sh .build/release/swx
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Lockfile reuse and submodules against SwiftPM
         run: |
           Scripts/compare-pin-reuse.sh .build/release/swx
@@ -94,6 +98,31 @@ jobs:
         run: |
           apt-get update -qq && apt-get install -y -qq python3
           Scripts/compare-registry.sh .build/release/swx
+      - name: Remote cache round trips, build outputs included
+        run: Scripts/check-remote-cache.sh .build/release/swx
+
+  # The setup action in this repository, installing a published release.
+  action:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pinned
+        uses: ./
+        with:
+          version: v0.3.0
+      - name: The pinned release is on the PATH
+        run: |
+          [ "${{ steps.pinned.outputs.version }}" = "0.3.0" ]
+          [ "$(swx --version)" = "0.3.0" ]
+      - id: latest
+        uses: ./
+        with:
+          install-dir: ${{ runner.temp }}/swx-latest
+      - name: The latest release installs
+        run: '"$RUNNER_TEMP/swx-latest/swx" --version'
 
   static-linux:
     runs-on: ubuntu-24.04

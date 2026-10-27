@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end check of `swx cache push|pull`: a package resolved into one store is pushed to a
 # remote cache (a directory, then an HTTP server with a bearer token); an empty store pulls it
-# back, and resolving then restores every checkout without running git.
+# back, and resolving then restores every checkout without running git. Last, build outputs
+# pushed with --build are restored into an empty store, and no dependency rebuilds.
 #
 #   Scripts/check-remote-cache.sh [swx-binary]
 set -euo pipefail
@@ -56,3 +57,21 @@ if (cd "$work/package" && SWX_CACHE_DIR="$work/store-wrong" SWX_REMOTE_CACHE_TOK
     exit 1
 fi
 echo "http: a wrong token is refused"
+
+# Build outputs: built and pushed from one store, restored into an empty one at the same path.
+# After the restore, building may recompile the package's own target, never a dependency.
+export SWX_CACHE_DIR="$work/store-push"
+remote="file://$work/remote-directory"
+(cd "$work/package" && swift build >/dev/null && "$swx" cache push --build --remote "$remote" >/dev/null)
+rm -rf "$work/package/.build"
+export SWX_CACHE_DIR="$work/store-build"
+pulled="$(cd "$work/package" && "$swx" cache pull --build --remote "$remote")"
+[[ "$pulled" == *"build: restored .build"*"built from these sources"* ]] || { echo "build: not restored: $pulled"; exit 1; }
+(cd "$work/package" && "$swx" package resolve -q)
+touch "$work/restored"
+(cd "$work/package" && swift build >/dev/null)
+objects="$(find "$work/package/.build" -name '*.o' | wc -l | tr -d ' ')"
+[ "$objects" -gt 0 ] || { echo "build: no object files to compare"; exit 1; }
+rebuilt="$(find "$work/package/.build" -name '*.o' -newer "$work/restored" | grep -v '/App' || true)"
+[ -z "$rebuilt" ] || { echo "build: dependencies rebuilt after a restore:"; echo "$rebuilt" | head; exit 1; }
+echo "build: restored $objects object files; only the package's own target rebuilt"

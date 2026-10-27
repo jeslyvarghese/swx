@@ -31,6 +31,7 @@
             <li><a href="#inspect">Inspecting</a></li>
             <li><a href="#build">Build, test, run</a></li>
             <li><a href="#cache">Remote cache</a></li>
+            <li><a href="#ci">CI</a></li>
             <li><a href="#apple">Apple platforms</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
             <li><a href="#toolchains">Toolchains</a></li>
@@ -76,6 +77,16 @@ ln -s swx ~/.local/bin/swift-x   <span class="c"># optional: enables `swift x �
 swx add swift-nio@2.60.0 --product NIOCore
 swx add apple/swift-log --target Server
 swx add https://github.com/me/kit --branch main</pre>
+            <p>
+                <code>swx remove</code> takes a dependency out again, with every target's use of its products.
+                <code>swx upgrade</code> moves requirements that exclude a dependency's newest release to it, keeping
+                each requirement's form; updates within your requirements are <code>swx package update</code>. Both
+                edit only what they must and leave the rest of <code>Package.swift</code> as you wrote it, then
+                resolve; if the new versions don't resolve together, <code>upgrade</code> puts the manifest back.
+            </p>
+<pre>swx remove swift-nio
+swx upgrade --dry-run          <span class="c"># swift-argument-parser: would move 0.4.0 → 1.8.2</span>
+swx upgrade swift-argument-parser</pre>
             <p>Resolving is a drop-in for <code>swift package resolve</code> and <code>update</code>, with the same flags. Any other <code>package</code> subcommand is forwarded to SwiftPM.</p>
 <pre>swx package resolve
 swx package resolve --check     <span class="c"># exit 1 if resolving would change Package.resolved (for CI)</span>
@@ -138,6 +149,17 @@ swx inspect imports         <span class="c"># undeclared imports (exit 1) and un
                 declare. <code>outdated</code> and <code>audit</code> list versions and advisories over the
                 network; all of them take <code>--format json</code>.
             </p>
+            <p>
+                For CI, <code>.swx/policy.json</code> says what to accept: advisories to ignore (by GHSA or CVE id,
+                still named in the report), the mildest severity that fails <code>audit</code> (unrated advisories
+                always fail), and when <code>outdated</code> fails: <code>never</code> (the default),
+                <code>wanted</code> (the lockfile is behind your requirements) or <code>latest</code> (any newer
+                release). <code>--ignore</code> adds to the file and <code>--fail-on</code> overrides it.
+            </p>
+<pre>{
+  "audit": { "ignore": ["GHSA-xvr7-p2c6-j83w"], "failOn": "high" },
+  "outdated": { "ignore": ["swift-syntax"], "failOn": "wanted" }
+}</pre>
         </section>
 
         <section id="build">
@@ -167,12 +189,21 @@ swx run MyTool --flag</pre>
                 results of <code>swx test --selective</code>. After a pull, resolving restores every checkout
                 without running git.
             </p>
+            <p>
+                With <code>--build</code> they also share <code>.build</code>, without the checkouts swx restores
+                itself. SwiftPM reuses build outputs only at the same absolute path with the same toolchain, which
+                CI runners keep stable, so both are part of the key. A pull restores the archive built from exactly
+                these files, else one built with the same <code>Package.resolved</code>, whose dependencies are
+                still current; it never overwrites an existing build. A release build of a package using
+                swift-argument-parser, swift-collections and swift-nio took 23 s cold and 3 s after a pull into an
+                empty store.
+            </p>
 <pre><span class="c"># CI: restore, resolve offline, test what changed, share the results</span>
 export SWX_REMOTE_CACHE=s3://my-bucket/swx
-swx cache pull
+swx cache pull --build
 swx package resolve
 swx test --selective
-swx cache push</pre>
+swx cache push --build</pre>
             <div class="table-scroll">
                 <table>
                     <thead><tr><th>Remote</th><th>Credentials</th></tr></thead>
@@ -183,6 +214,37 @@ swx cache push</pre>
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <section id="ci">
+            <h2>CI</h2>
+            <p>
+                The repository is also a GitHub Action that installs swx. A workflow that fails on stale lockfiles,
+                vulnerable dependencies and undeclared imports, and shares checkouts, builds and test results
+                between runs:
+            </p>
+<pre>jobs:
+  check:
+    runs-on: macos-26
+    env:
+      SWX_REMOTE_CACHE: s3://my-bucket/swx
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: eu-west-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jeslyvarghese/swx@v0.4.0      <span class="c"># with: version: v0.4.0 (default: latest)</span>
+      - run: swx cache pull --build
+      - run: swx package resolve --check    <span class="c"># Package.resolved is committed and current</span>
+      - run: swx audit                      <span class="c"># honours .swx/policy.json</span>
+      - run: swx inspect imports
+      - run: swx test --selective
+      - if: always()
+        run: swx cache push --build</pre>
+            <p>
+                Without a bucket, point <code>SWX_REMOTE_CACHE</code> at a directory that
+                <code>actions/cache</code> saves and restores.
+            </p>
         </section>
 
         <section id="apple">
@@ -290,6 +352,7 @@ import ArgumentParser</pre>
 <pre>Scripts/compare-with-swiftpm.sh &lt;package-dir&gt;   <span class="c"># Package.resolved, workspace-state.json, checkouts</span>
 Scripts/compare-registry-signing.sh             <span class="c"># signed registry releases: trusted, untrusted, tampered</span>
 Scripts/compare-xcode-apps.sh                   <span class="c"># an app + widget + watch app project vs xcodebuild</span>
+Scripts/check-manifest-edits.sh                 <span class="c"># add, remove, upgrade, each resolved like SwiftPM</span>
 swx debug manifest-parity --cache-path &lt;dir&gt;    <span class="c"># the static parser vs dump-package over a corpus</span></pre>
             <p>Found a difference from SwiftPM? That's a bug — <a href="https://github.com/jeslyvarghese/swx/issues/new/choose">please report it</a>.</p>
         </section>
