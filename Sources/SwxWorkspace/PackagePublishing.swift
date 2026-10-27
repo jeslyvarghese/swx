@@ -9,6 +9,8 @@ public enum PublishSigning: Sendable {
     case unsigned
     /// A DER PKCS#8 P-256 key, and DER certificates leaf first.
     case certificate(privateKey: URL, chain: [URL])
+    /// The Keychain identity whose certificate has this label (macOS).
+    case keychain(label: String)
 }
 
 /// Whether a plain-HTTP registry URL is acceptable (`--allow-insecure-http`).
@@ -183,12 +185,26 @@ extension Workspace {
         }
     }
 
+    /// Restricts `--signing-identity` to one keychain file, so tests needn't touch the user's.
+    private static let signingKeychainVariable = "SWX_SIGNING_KEYCHAIN"
+
     private static func signer(for signing: PublishSigning) throws -> RegistrySigner? {
-        guard case .certificate(let privateKey, let chain) = signing else { return nil }
-        guard !chain.isEmpty else {
-            throw WorkspaceError(description: "both --private-key-path and --cert-chain-paths are required when one of them is set")
+        switch signing {
+        case .unsigned:
+            return nil
+        case .certificate(let privateKey, let chain):
+            guard !chain.isEmpty else {
+                throw WorkspaceError(description: "both --private-key-path and --cert-chain-paths are required when one of them is set")
+            }
+            return try RegistrySigner(privateKey: try FileSystem.read(privateKey), chain: try chain.map(FileSystem.read))
+        case .keychain(let label):
+            #if canImport(Security)
+            let keychain = ProcessInfo.processInfo.environment[Self.signingKeychainVariable].map { URL(fileURLWithPath: $0) }
+            return try RegistrySigner(keychainLabel: label, intermediates: [], keychain: keychain)
+            #else
+            throw WorkspaceError(description: "--signing-identity needs the macOS Keychain; pass --private-key-path and --cert-chain-paths")
+            #endif
         }
-        return try RegistrySigner(privateKey: try FileSystem.read(privateKey), chain: try chain.map(FileSystem.read))
     }
 
     /// Everything at the top of the package but what SwiftPM leaves out.

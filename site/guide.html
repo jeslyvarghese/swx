@@ -181,13 +181,14 @@ swx inspect imports         <span class="c"># undeclared imports (exit 1) and un
             </p>
 <pre>swx publish mona.LinkedList 1.2.0 --url https://registry.example.com
 swx publish mona.LinkedList 1.2.0 --private-key-path key.p8 --cert-chain-paths leaf.der intermediate.der root.der
+swx publish mona.LinkedList 1.2.0 --signing-identity "Mona Signer"                <span class="c"># a Keychain identity (macOS)</span>
 swx publish mona.LinkedList 1.2.0 --dry-run --scratch-directory out   <span class="c"># archive and signatures, no upload</span></pre>
             <p>
                 With a key and certificate chain, the manifests in the archive, the archive and the metadata are
                 signed (<code>cms-1.0.0</code>, as SE-0391 defines). The registry is <code>--url</code>, or the one
                 <code>registries.json</code> configures for the scope; credentials come from the netrc file or the
-                Keychain, as for resolving. Keychain signing identities (<code>--signing-identity</code>) aren't
-                supported yet.
+                Keychain, as for resolving. On macOS, <code>--signing-identity "Label"</code> signs with a Keychain
+                identity instead, without the key ever leaving the Keychain.
             </p>
         </section>
 

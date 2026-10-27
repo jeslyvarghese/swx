@@ -1,7 +1,12 @@
 import Crypto
 import Foundation
 @_spi(CMS) import X509
+import SwiftASN1
 import SwxSystem
+
+#if canImport(Security)
+import Security
+#endif
 
 /// Signs release content as `swift package-registry publish` does: detached CMS signatures
 /// (`cms-1.0.0`) with a P-256 key and the certificate chain that vouches for it.
@@ -11,7 +16,17 @@ public struct RegistrySigner: Sendable {
 
     private let certificate: Certificate
     private let intermediates: [Certificate]
-    private let privateKey: Certificate.PrivateKey
+    private let key: Key
+
+    /// Where the signing key lives.
+    private enum Key: @unchecked Sendable {
+        /// A key read from a file.
+        case file(Certificate.PrivateKey)
+        #if canImport(Security)
+        /// A key in the Keychain, which signs without leaving it.
+        case keychain(SecKey)
+        #endif
+    }
 
     /// `chain` is DER certificates, leaf first; the rest travel with every signature.
     public init(privateKey: Data, chain: [Data]) throws {
@@ -25,21 +40,82 @@ public struct RegistrySigner: Sendable {
             throw SourceError(description: "invalid certificate: \(error)")
         }
         do {
-            self.privateKey = Certificate.PrivateKey(try P256.Signing.PrivateKey(derRepresentation: privateKey))
+            self.key = .file(Certificate.PrivateKey(try P256.Signing.PrivateKey(derRepresentation: privateKey)))
         } catch {
             throw SourceError(description: "invalid key (expected a DER-encoded PKCS#8 P-256 key): \(error)")
         }
     }
 
+    #if canImport(Security)
+    /// The Keychain identity whose certificate has this label (`--signing-identity`), looked up
+    /// as SwiftPM looks it up. `keychain` restricts the search to one keychain file (for tests).
+    public init(keychainLabel label: String, intermediates chain: [Data], keychain: URL? = nil) throws {
+        var query: [String: Any] = [
+            // SwiftPM searches certificates: identity searches ignore the label.
+            kSecClass as String: kSecClassCertificate,
+            kSecReturnRef as String: true,
+            kSecAttrLabel as String: label,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var searched: SecKeychain?
+        if let keychain {
+            guard SecKeychainOpen(keychain.path, &searched) == errSecSuccess, let searched else {
+                throw SourceError(description: "can't open the keychain at \(keychain.path)")
+            }
+            query[kSecMatchSearchList as String] = [searched]
+        }
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let secCertificate = (result as? [SecCertificate])?.first else {
+            throw SourceError(description: "'\(label)' not found in the system identity store.")
+        }
+        var identity: SecIdentity?
+        var privateKey: SecKey?
+        // The key is looked for where the certificate was (`nil`: the default search list).
+        guard SecIdentityCreateWithCertificate(searched, secCertificate, &identity) == errSecSuccess, let identity,
+              SecIdentityCopyPrivateKey(identity, &privateKey) == errSecSuccess, let privateKey else {
+            throw SourceError(description: "'\(label)' has no private key in the Keychain")
+        }
+
+        do {
+            self.certificate = try Certificate(derEncoded: Array(SecCertificateCopyData(secCertificate) as Data))
+            self.intermediates = try chain.map { try Certificate(derEncoded: Array($0)) }
+        } catch {
+            throw SourceError(description: "invalid certificate: \(error)")
+        }
+        self.key = .keychain(privateKey)
+    }
+    #endif
+
     public func sign(_ content: Data) throws -> Data {
         do {
-            return Data(try CMS.sign(
-                Array(content),
-                signatureAlgorithm: .ecdsaWithSHA256,
-                additionalIntermediateCertificates: self.intermediates,
-                certificate: self.certificate,
-                privateKey: self.privateKey
-            ))
+            switch self.key {
+            case .file(let privateKey):
+                return Data(try CMS.sign(
+                    Array(content),
+                    signatureAlgorithm: .ecdsaWithSHA256,
+                    additionalIntermediateCertificates: self.intermediates,
+                    certificate: self.certificate,
+                    privateKey: privateKey
+                ))
+            #if canImport(Security)
+            case .keychain(let privateKey):
+                // The Keychain signs; CMS wraps the signature, as SwiftPM does for a SecIdentity.
+                var error: Unmanaged<CFError>?
+                guard let signature = SecKeyCreateSignature(privateKey, .ecdsaSignatureMessageX962SHA256, content as CFData, &error) as Data? else {
+                    throw SourceError(description: "the Keychain refused to sign: \(error.map { String(describing: $0.takeRetainedValue()) } ?? "unknown error")")
+                }
+                return Data(try CMS.sign(
+                    signatureBytes: ASN1OctetString(contentBytes: ArraySlice(signature)),
+                    signatureAlgorithm: .ecdsaWithSHA256,
+                    additionalIntermediateCertificates: self.intermediates,
+                    certificate: self.certificate
+                ))
+            #endif
+            }
+        } catch let error as SourceError {
+            throw error
         } catch {
             throw SourceError(description: "signing failed: \(error)")
         }

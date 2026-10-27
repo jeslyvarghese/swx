@@ -32,7 +32,7 @@ struct Publish: AsyncParsableCommand {
     @Option(name: .customLong("metadata-path"), help: "The path to the package metadata JSON file if it is not 'package-metadata.json' in the package directory.")
     var metadataPath: String?
 
-    @Option(help: "Keychain signing identities aren't supported yet; use --private-key-path and --cert-chain-paths.")
+    @Option(help: "The label of the signing identity to be retrieved from the system's identity store if supported.")
     var signingIdentity: String?
 
     @Option(help: "The path to the certificate's PKCS#8 private key (DER-encoded).")
@@ -65,17 +65,19 @@ struct Publish: AsyncParsableCommand {
     }
 
     private func request() throws -> PublishRequest {
-        guard self.signingIdentity == nil else {
-            throw ValidationError("--signing-identity (keychain identities) isn't supported yet; pass --private-key-path and --cert-chain-paths")
-        }
+        // SwiftPM's rules: a Keychain label alone, or a key file with its chain.
         let signing: PublishSigning
-        switch (self.privateKeyPath, self.certificateChainPaths.isEmpty) {
-        case (nil, true):
+        switch (self.signingIdentity, self.privateKeyPath, self.certificateChainPaths.isEmpty) {
+        case (nil, nil, true):
             signing = .unsigned
-        case (let key?, false):
+        case (let label?, nil, true):
+            signing = .keychain(label: label)
+        case (nil, let key?, false):
             signing = .certificate(privateKey: FileSystemPaths.absolute(key), chain: self.certificateChainPaths.map(FileSystemPaths.absolute))
-        default:
+        case (nil, _, _):
             throw ValidationError("Both 'private-key-path' and 'cert-chain-paths' are required when one of them is set.")
+        default:
+            throw ValidationError("Either 'signing-identity' or 'private-key-path' (together with 'cert-chain-paths') must be provided.")
         }
         let registry = try self.registryURL.map { text -> URL in
             guard let url = URL(string: text) else { throw ValidationError("invalid registry URL: \(text)") }
