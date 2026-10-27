@@ -130,9 +130,8 @@ extension Workspace {
     /// The commit of every source-control pin in `Package.resolved` (registry and path pins have none).
     private func pinnedRevisions() async throws -> [String] {
         let root = try await self.rootContext()
-        guard let data = FileSystem.readIfPresent(root.layout.resolvedFile) else {
-            throw WorkspaceError(description: "no \(WellKnownFile.packageResolved); resolve first")
-        }
+        // No lockfile, nothing pinned: SwiftPM writes none for a package without dependencies.
+        guard let data = FileSystem.readIfPresent(root.layout.resolvedFile) else { return [] }
         return try ResolvedFile.decode(data).pins.values.compactMap(\.state.revision).sorted()
     }
 

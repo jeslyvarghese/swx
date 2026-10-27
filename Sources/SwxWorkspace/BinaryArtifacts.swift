@@ -57,8 +57,11 @@ struct ArtifactInstaller: Sendable {
     /// Only artifact bundle indexes need it, so it is computed on demand.
     let hostTriple: @Sendable () async throws -> String
 
-    /// Installs every remote binary target `manifest` declares.
-    func install(package: PackageReference, manifest: Manifest, change: PackageChange) async throws -> PackageArtifacts {
+    private static let zipExtension = "zip"
+
+    /// Installs every remote binary target `manifest` declares, and records local ones in place.
+    /// `directory` holds the package (its checkout, or the root).
+    func install(package: PackageReference, manifest: Manifest, directory: URL, change: PackageChange) async throws -> PackageArtifacts {
         var declared: Set<ManagedArtifact.Key> = []
         var outcomes: [ManagedArtifact.Key: ArtifactOutcome] = [:]
 
@@ -66,12 +69,39 @@ struct ArtifactInstaller: Sendable {
             let key = ManagedArtifact.Key(package: package.identity, targetName: target.name)
             declared.insert(key)
 
-            // Local artifacts are read in place by SwiftPM; nothing to share.
-            guard case .remote(let declaredURL, let checksum)? = target.binaryLocation else { continue }
-            let url = self.mirrors.location(declaredURL)
-            outcomes[key] = try await self.install(key: key, package: package, packageName: manifest.name, url: url, checksum: checksum, change: change)
+            switch target.binaryLocation {
+            case .remote(let declaredURL, let checksum)?:
+                let url = self.mirrors.location(declaredURL)
+                outcomes[key] = try await self.install(key: key, package: package, packageName: manifest.name, url: url, checksum: checksum, change: change)
+            case .local(let path)?:
+                outcomes[key] = try self.recordLocal(key: key, package: package, packageName: manifest.name, path: path, in: directory)
+            case nil:
+                continue
+            }
         }
         return PackageArtifacts(declared: declared, outcomes: outcomes)
+    }
+
+    /// SwiftPM uses a local XCFramework or artifact bundle where it is, and records it as a
+    /// `local` artifact at the artifact it finds there; a missing one fails the resolve, as in
+    /// SwiftPM. Local zip archives are extracted by SwiftPM itself.
+    private func recordLocal(key: ManagedArtifact.Key, package: PackageReference, packageName: String, path: String, in directory: URL) throws -> ArtifactOutcome {
+        let location = URL(fileURLWithPath: FileSystem.normalize(path, relativeTo: directory.path))
+        guard location.pathExtension.lowercased() != Self.zipExtension else {
+            return .leftToSwiftPM(reason: "a local archive, which SwiftPM extracts")
+        }
+        guard let derived = BinaryArtifactSource.deriveLocal(at: location) else {
+            throw WorkspaceError(description: "local binary target '\(key.targetName)' at '\(location.path)' does not contain a binary artifact.")
+        }
+        let artifact = derived.relativePath.isEmpty ? location : location.appendingPathComponent(derived.relativePath)
+        return .installed(ManagedArtifact(
+            package: package,
+            packageName: packageName,
+            targetName: key.targetName,
+            source: .local(checksum: nil),
+            path: self.pathStyle.spelling(of: artifact),
+            kind: Self.kind(derived.kind)
+        ))
     }
 
     private func install(

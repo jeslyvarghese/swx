@@ -428,21 +428,10 @@ public actor RegistrySource {
         return response
     }
 
-    /// Like SwiftPM: any credential found is sent, as the configured type, or by default as basic
-    /// auth (bearer when the login is `token`).
+    /// Like SwiftPM: any credential found is sent (see `RegistryAuthorization`).
     private func authorization(for registry: Registry) async -> String? {
         guard let credential = await self.credentials.credential(for: registry.url) else { return nil }
-        let basic = "Basic " + Data("\(credential.login):\(credential.password)".utf8).base64EncodedString()
-        let bearer = "Bearer " + credential.password
-
-        switch self.configuration.authentication(for: registry.url) {
-        case .basic:
-            return basic
-        case .token:
-            return bearer
-        case nil:
-            return credential.login == RegistryCredentials.tokenLogin ? bearer : basic
-        }
+        return RegistryAuthorization.header(for: credential, authentication: self.configuration.authentication(for: registry.url))
     }
 
     private func checkAvailability(of registry: Registry) async throws {

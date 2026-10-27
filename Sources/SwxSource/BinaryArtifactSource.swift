@@ -182,6 +182,13 @@ public actor BinaryArtifactSource {
 
     /// The single artifact in `root`, or `nil` when there is none or it is ambiguous
     /// (SwiftPM then reports or picks one itself).
+    /// The artifact of a local binary target: SwiftPM takes the last one found when there are
+    /// several (`deriveBinaryArtifact`).
+    public static func deriveLocal(at root: URL) -> DerivedArtifact? {
+        guard FileSystem.isDirectory(root) else { return nil }
+        return Self.deriveAll(in: root, relativePath: "").last
+    }
+
     public static func derive(in root: URL) -> DerivedArtifact? {
         let found = Self.deriveAll(in: root, relativePath: "")
         guard found.count == 1 else { return nil }

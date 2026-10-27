@@ -161,6 +161,31 @@ public enum HTTP {
         }
     }
 
+    /// Uploads bytes held in memory as the request body: unlike a file upload, URLSession adds no
+    /// resumable-upload headers (`Upload-Complete`), so the request is what other clients send.
+    public static func put(_ url: URL, body: Data, headers: [String: String]) async throws -> HTTPResponse {
+        try await Self.retrying(url) {
+            var request = URLRequest(url: url)
+            request.httpMethod = Self.putMethod
+            request.httpBody = body
+            for (name, value) in headers {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let (data, response) = try await Self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw HTTPError(description: "\(url.absoluteString): not an HTTP response")
+            }
+            if Self.serverErrorCodes.contains(http.statusCode) {
+                throw Failure.transient(HTTPError(description: "\(url.absoluteString): HTTP \(http.statusCode)"))
+            }
+            var fields: [String: String] = [:]
+            for case (let name as String, let value as String) in http.allHeaderFields {
+                fields[name] = value
+            }
+            return HTTPResponse(status: http.statusCode, body: data, headers: fields)
+        }
+    }
+
     /// Downloads `url` to `destination` with request headers; returns the status, and leaves
     /// `destination` alone unless it is a success.
     public static func download(_ url: URL, headers: [String: String], to destination: URL) async throws -> Int {

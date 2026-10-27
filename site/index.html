@@ -54,7 +54,9 @@
                 <li><b>Dependency graphs:</b> <code>swx graph</code> as a tree, Graphviz, Mermaid or JSON, with each edge's conditions.</li>
                 <li><b>Toolchains:</b> installs swift.org releases and snapshots, and honours <code>.swift-version</code>.</li>
                 <li><b>Tools and scripts:</b> runs package executables like <code>uvx</code>, and single-file scripts with dependencies.</li>
-                <li><b>Registries:</b> SE-0292 registries with authentication, SE-0391 signatures and SwiftPM's trust store.</li>
+                <li><b>Registries:</b> SE-0292 registries with authentication, SE-0391 signatures and SwiftPM's trust store, and <code>swx publish</code> to put releases there.</li>
+                <li><b>Monorepos:</b> <code>--all</code> resolves, checks, builds, tests and caches every package of a repository, sharing one store.</li>
+                <li><b>Housekeeping:</b> <code>swx cache size</code> and <code>prune</code> keep the store and remote caches in check; <code>swx self update</code> and a Homebrew tap keep swx current.</li>
             </ul>
         </div>
     </section>

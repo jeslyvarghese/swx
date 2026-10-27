@@ -204,7 +204,7 @@ actor FactProvider {
         do {
             // Pick the manifest SwiftPM would pick, and reject newer tools versions without evaluating.
             let contents = try await self.manifestContents(of: package, at: version)
-            let declaredToolsVersion = ToolsVersion.parse(manifest: contents)
+            let declaredToolsVersion = try ToolsVersion.specification(of: contents)
             guard declaredToolsVersion <= self.toolchain.toolsVersion else {
                 return .unavailable(reason: "requires tools version \(declaredToolsVersion), current is \(self.toolchain.toolsVersion)")
             }

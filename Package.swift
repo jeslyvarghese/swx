@@ -99,6 +99,8 @@ let package = Package(
             dependencies: [
                 "SwxCore", "SwxStore", "SwxSystem",
                 .product(name: "Crypto", package: "swift-crypto"),
+                // RSA signatures of prebuilts manifests.
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
                 .product(name: "X509", package: "swift-certificates"),
                 .product(name: "SwiftASN1", package: "swift-asn1"),
             ]
@@ -137,6 +139,12 @@ let package = Package(
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
         .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
-        .testTarget(name: "SwxSourceTests", dependencies: ["SwxCore", "SwxSource", "SwxStore"]),
+        .testTarget(name: "SwxSourceTests", dependencies: [
+            "SwxCore", "SwxSource", "SwxStore",
+            // Test PKIs for signature checks.
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "X509", package: "swift-certificates"),
+            .product(name: "SwiftASN1", package: "swift-asn1"),
+        ]),
     ]
 )

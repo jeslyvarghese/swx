@@ -29,8 +29,10 @@
             <li><a href="#dependencies">Dependencies</a></li>
             <li><a href="#graphs">Graphs</a></li>
             <li><a href="#inspect">Inspecting</a></li>
+            <li><a href="#publish">Publishing</a></li>
             <li><a href="#build">Build, test, run</a></li>
-            <li><a href="#cache">Remote cache</a></li>
+            <li><a href="#monorepos">Monorepos</a></li>
+            <li><a href="#cache">Caches</a></li>
             <li><a href="#ci">CI</a></li>
             <li><a href="#apple">Apple platforms</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
@@ -55,8 +57,14 @@
                 <code>SHA256SUMS</code>, and installs <code>swx</code> and <code>swift-x</code> into
                 <code>~/.local/bin</code>. With <code>swift-x</code> on your <code>PATH</code>,
                 <code>swift x build</code> works too. <code>SWX_VERSION=v0.1.0</code> pins a release and
-                <code>SWX_INSTALL_DIR</code> changes the location.
+                <code>SWX_INSTALL_DIR</code> changes the location. <code>swx self update</code> later replaces
+                the binary with the newest release, checked the same way (<code>--version</code> picks one,
+                <code>--check</code> only asks).
             </p>
+            <p>With Homebrew, the repository is its own tap; with Mint, swx builds from source:</p>
+<pre>brew tap jeslyvarghese/swx https://github.com/jeslyvarghese/swx
+brew install swx                 <span class="c"># and later: brew upgrade swx</span>
+mint install jeslyvarghese/swx</pre>
             <p>From source, with Swift 6.1 or later:</p>
 <pre>git clone https://github.com/jeslyvarghese/swx && cd swx
 swift build -c release
@@ -162,6 +170,26 @@ swx inspect imports         <span class="c"># undeclared imports (exit 1) and un
 }</pre>
         </section>
 
+        <section id="publish">
+            <h2>Publishing</h2>
+            <p>
+                <code>swx publish</code> is <code>swift package-registry publish</code>: the same arguments, the same
+                archive (the package without <code>.build</code>, <code>.git</code>, <code>.gitignore</code> and
+                <code>.swiftpm</code>, zipped under <code>&lt;scope&gt;.&lt;name&gt;/</code>), the same signatures and
+                the same request. <code>package-metadata.json</code> is sent when the package has one.
+            </p>
+<pre>swx publish mona.LinkedList 1.2.0 --url https://registry.example.com
+swx publish mona.LinkedList 1.2.0 --private-key-path key.p8 --cert-chain-paths leaf.der intermediate.der root.der
+swx publish mona.LinkedList 1.2.0 --dry-run --scratch-directory out   <span class="c"># archive and signatures, no upload</span></pre>
+            <p>
+                With a key and certificate chain, the manifests in the archive, the archive and the metadata are
+                signed (<code>cms-1.0.0</code>, as SE-0391 defines). The registry is <code>--url</code>, or the one
+                <code>registries.json</code> configures for the scope; credentials come from the netrc file or the
+                Keychain, as for resolving. Keychain signing identities (<code>--signing-identity</code>) aren't
+                supported yet.
+            </p>
+        </section>
+
         <section id="build">
             <h2>Build, test, run</h2>
             <p>swx resolves first, then hands over to SwiftPM with resolution disabled.</p>
@@ -181,8 +209,35 @@ swx run MyTool --flag</pre>
             </p>
         </section>
 
+        <section id="monorepos">
+            <h2>Monorepos</h2>
+            <p>
+                <code>--all</code> runs a command for every package under <code>--package-path</code> (the current
+                directory by default), nested ones included, skipping <code>.build</code>, hidden directories and
+                packages that <code>swift package edit</code> put in <code>Packages/</code>. Each package gets the
+                files SwiftPM would write for it, and all of them share one store, so a repository used by several
+                packages is fetched once.
+            </p>
+<pre>swx package resolve --all          <span class="c"># four at a time; each result under its package's path</span>
+swx package resolve --check --all  <span class="c"># exit 1 naming every stale Package.resolved</span>
+swx package update --all
+swx build --all                    <span class="c"># one package after another</span>
+swx test --all --selective
+swx cache pull --all &amp;&amp; swx cache push --all</pre>
+        </section>
+
         <section id="cache">
-            <h2>Remote cache</h2>
+            <h2>Caches</h2>
+            <p>
+                Everything swx downloads or builds lives in one store (<code>~/.cache/swx</code>), shared by every
+                project. <code>swx cache size</code> shows what it holds. <code>swx cache prune</code> removes what
+                no project resolved with swx still pins and nothing used within <code>--older-than</code> (30 days
+                by default), plus scratch left by interrupted runs. Projects keep working: their checkouts are
+                copies, so only a fresh checkout of a removed entry fetches it again.
+            </p>
+<pre>swx cache size
+swx cache prune --dry-run
+swx cache prune --older-than 7d</pre>
             <p>
                 <code>swx cache push</code> and <code>pull</code> share the store with other machines: the source
                 tree and manifests of every pinned commit, the binary artifacts the manifests declare, and the
@@ -197,6 +252,19 @@ swx run MyTool --flag</pre>
                 still current; it never overwrites an existing build. A release build of a package using
                 swift-argument-parser, swift-collections and swift-nio took 23 s cold and 3 s after a pull into an
                 empty store. With SwiftPM's native build system, the sample package took 11 s cold and 1 s restored.
+            </p>
+            <p>
+                The path is not something swx can hide. SwiftPM's build system records the package's real path,
+                symlinks resolved, in what it builds from, so a checkout elsewhere rebuilds everything; a stable
+                symlink would only help the deprecated native build system. On laptops, the store still saves
+                the downloads and checkouts.
+            </p>
+            <p>
+                Remote caches grow too: <code>swx cache size --remote …</code> totals them by kind, and
+                <code>swx cache prune --remote … --older-than 30d</code> deletes the files swx wrote that were last
+                uploaded (in a directory remote, last downloaded) before then; the next push uploads what a
+                project still needs. HTTP remotes can't be listed, so expire their files on the server.
+                <code>$SWX_REMOTE_CACHE</code> is never used for a prune: name the remote.
             </p>
 <pre><span class="c"># CI: restore, resolve offline, test what changed, share the results</span>
 export SWX_REMOTE_CACHE=s3://my-bucket/swx
@@ -233,7 +301,7 @@ swx cache push --build</pre>
       AWS_REGION: eu-west-1
     steps:
       - uses: actions/checkout@v4
-      - uses: jeslyvarghese/swx@v0.4.0      <span class="c"># with: version: v0.4.0 (default: latest)</span>
+      - uses: jeslyvarghese/swx@v0.5.0      <span class="c"># with: version: v0.5.0 (default: latest)</span>
       - run: swx cache pull --build
       - run: swx package resolve --check    <span class="c"># Package.resolved is committed and current</span>
       - run: swx audit                      <span class="c"># honours .swx/policy.json</span>
@@ -318,6 +386,7 @@ import ArgumentParser</pre>
                         <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>
                         <tr><td><code>SWX_REMOTE_CACHE</code></td><td>The remote cache for <code>swx cache push|pull</code>.</td></tr>
                         <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache; <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
+                        <tr><td><code>SWX_DOWNLOAD_URL</code></td><td>A mirror of the release assets, for the install script and <code>swx self update --version</code>.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -328,14 +397,16 @@ import ArgumentParser</pre>
             <p>Each of these is checked byte for byte against SwiftPM or Xcode:</p>
             <ul class="features">
                 <li><b>Package.resolved:</b> v2 and v3 written, v1 read; <code>originHash</code> matches SwiftPM's and Xcode's.</li>
-                <li><b>Workspace state:</b> <code>workspace-state.json</code> v7, including path dependencies and binary artifacts. Entries swx doesn't manage (edited packages, prebuilts) are kept untouched.</li>
+                <li><b>Workspace state:</b> <code>workspace-state.json</code> v7, including path dependencies, binary artifacts (local ones recorded in place) and prebuilts. Entries swx doesn't manage (edited packages) are kept untouched.</li>
+                <li><b>Prebuilt swift-syntax:</b> as SwiftPM 6.4 does while resolving, the signed prebuilts manifest for this compiler and SDK is checked against Apple's roots, and the libraries are downloaded once per machine, checksum-verified and placed in <code>.build/prebuilts</code>. <code>--disable-experimental-prebuilts</code> turns it off.</li>
                 <li><b>Dependencies:</b> branch, revision, path and local git dependencies; SwiftPM's pruning, traits, tag-to-version rules and pre-release ranges.</li>
                 <li><b>Mirrors:</b> <code>mirrors.json</code> from the package and <code>~/.swiftpm</code>; the original URL is what the lockfile records.</li>
                 <li><b>Submodules and Git LFS:</b> checked out as SwiftPM checks them out (LFS needs <code>git-lfs</code>, as SwiftPM does).</li>
                 <li><b>Registries:</b> <code>registries.json</code>, SwiftPM's credential lookup (environment, Keychain, <code>.netrc</code>), checksums and trust-on-first-use fingerprints, SE-0391 signatures, and <code>--replace-scm-with-registry</code>.</li>
                 <li><b>Tag fingerprints:</b> the commit behind each tag is recorded in SwiftPM's store, and a tag that moves is refused.</li>
                 <li><b>Binary targets:</b> XCFrameworks, artifact bundles and <code>.artifactbundleindex</code>, downloaded and unzipped once per machine.</li>
-                <li><b>Manifests:</b> 0 disagreements with <code>dump-package</code> over a 364-manifest corpus.</li>
+                <li><b>Manifests:</b> 0 disagreements with <code>dump-package</code> over a 364-manifest corpus, and SwiftPM's tools-version rules, including that a version below 6.0 must be on the first line.</li>
+                <li><b>Publishing:</b> the archive, signatures and request of <code>swift package-registry publish</code>.</li>
                 <li><b>Xcode:</b> projects, workspaces and root package folders, with the registries and mirrors Xcode keeps in <code>xcshareddata</code>.</li>
                 <li><b>Mixed use:</b> <code>swift package update</code> works on top of swx checkouts, and swift-syntax prebuilts still apply.</li>
             </ul>
@@ -353,6 +424,9 @@ import ArgumentParser</pre>
 Scripts/compare-registry-signing.sh             <span class="c"># signed registry releases: trusted, untrusted, tampered</span>
 Scripts/compare-xcode-apps.sh                   <span class="c"># an app + widget + watch app project vs xcodebuild</span>
 Scripts/check-manifest-edits.sh                 <span class="c"># add, remove, upgrade, each resolved like SwiftPM</span>
+Scripts/compare-corpus.sh &lt;dir&gt;                 <span class="c"># 206 popular packages, each resolved by both</span>
+Scripts/compare-registry-publish.sh             <span class="c"># swx publish vs swift package-registry publish</span>
+Scripts/check-monorepo.sh                       <span class="c"># --all on a monorepo, each package vs SwiftPM</span>
 swx debug manifest-parity --cache-path &lt;dir&gt;    <span class="c"># the static parser vs dump-package over a corpus</span></pre>
             <p>Found a difference from SwiftPM? That's a bug — <a href="https://github.com/jeslyvarghese/swx/issues/new/choose">please report it</a>.</p>
         </section>

@@ -16,6 +16,7 @@ import SwxSystem
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// cas/                   shared compilation cache, when the toolchain supports it
+/// prebuilts/<pkg>/<ver>/ prebuilt libraries (swift-syntax for macros), as SwiftPM downloads them
 /// index/packages.json    the Swift Package Index's package list (`swx add <name>`)
 /// tests/<hash>           test targets that passed with exactly these inputs (`swx test --selective`)
 /// used/<section>/<name>  when each entry was last used, for `swx cache prune`
@@ -36,6 +37,7 @@ public struct Store: Sendable {
         case scripts
         case toolchains
         case cas
+        case prebuilts
         case index
         case tests
         case temporary = "tmp"
@@ -141,6 +143,11 @@ public struct Store: Sendable {
     /// The generated package for a script, keyed by script content and toolchain.
     public func scriptPath(key: String) -> URL {
         self.directory(.scripts).appendingPathComponent(key, isDirectory: true)
+    }
+
+    /// Prebuilt libraries of `package` at `version` (swift-syntax for macros), for every toolchain.
+    public func prebuiltPath(package: String, version: String) -> URL {
+        self.directory(.prebuilts).appendingPathComponent(package, isDirectory: true).appendingPathComponent(version, isDirectory: true)
     }
 
     /// The content-addressed compilation cache shared by all builds.

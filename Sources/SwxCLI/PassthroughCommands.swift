@@ -7,7 +7,9 @@ import SwxWorkspace
 enum Passthrough {
     private static let swift = "swift"
     private static let disableResolution = "--disable-automatic-resolution"
-    private static let packagePathOption = "--package-path"
+    static let packagePathFlag = "--package-path"
+    private static let packagePathOption = Self.packagePathFlag
+    private static let disablePrebuiltsFlag = "--disable-experimental-prebuilts"
     private static let configPathOption = "--config-path"
     private static let securityPathOption = "--security-path"
     private static let netrcFileOption = "--netrc-file"
@@ -30,6 +32,12 @@ enum Passthrough {
         ProcessRunner.exec(try await Self.prepare(command, arguments: arguments, resolution: resolution))
     }
 
+    /// Like `run`, but as a child process, so another package can follow (`--all`).
+    static func runToCompletion(_ command: [String], arguments: [String]) async throws {
+        let status = try await ProcessRunner.runStreaming(try await Self.prepare(command, arguments: arguments, resolution: .resolveFirst))
+        guard status == 0 else { throw ExitCode(status) }
+    }
+
     /// Activates the toolchain and resolves (unless told not to); returns the `swift <command> …`
     /// invocation to run.
     static func prepare(_ command: [String], arguments: [String], resolution: Resolution) async throws -> [String] {
@@ -40,7 +48,8 @@ enum Passthrough {
         }
 
         if resolution == .resolveFirst {
-            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments), transformation: Self.registryTransformation(in: arguments))
+            let prebuilts = PrebuiltsOptions(use: arguments.contains(Self.disablePrebuiltsFlag) ? .disabled : .enabled)
+            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments), transformation: Self.registryTransformation(in: arguments), prebuilts: prebuilts)
         }
 
         // SwiftPM accepts `--disable-automatic-resolution` on every command that may resolve.
@@ -63,6 +72,24 @@ enum Passthrough {
     /// Honours `--package-path` among the passed-through arguments.
     static func packagePath(in arguments: [String]) -> String {
         Self.value(of: Self.packagePathOption, in: arguments) ?? "."
+    }
+
+    /// Drops `--package-path` (both spellings), so `--all` can name each package instead.
+    static func removePackagePath(from arguments: inout [String]) {
+        var kept: [String] = []
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            let argument = arguments[index]
+            if argument == Self.packagePathOption {
+                index += 2
+                continue
+            }
+            if !argument.hasPrefix(Self.packagePathOption + Self.assignment) {
+                kept.append(argument)
+            }
+            index += 1
+        }
+        arguments = kept
     }
 
     /// SwiftPM's shared locations and credential flags, read from the passed-through arguments.
@@ -106,14 +133,15 @@ enum Passthrough {
         return arguments.contains(Self.useRegistryIdentityFlag) ? .useRegistryIdentity : .disabled
     }
 
-    private static func resolve(packagePath: String, settings: SwiftPMSettings, transformation: RegistryTransformation) async throws {
+    private static func resolve(packagePath: String, settings: SwiftPMSettings, transformation: RegistryTransformation, prebuilts: PrebuiltsOptions) async throws {
         let workspace = Workspace(options: WorkspaceOptions(
             root: .package(FileSystemPaths.absolute(packagePath)),
             cacheDirectory: nil,
             maximumConcurrency: ResolverDefaults.concurrency,
             verbosity: .normal,
             swiftPM: settings,
-            registryTransformation: transformation
+            registryTransformation: transformation,
+            prebuilts: prebuilts
         ))
         do {
             let report = try await workspace.resolve(mode: .respectPins)
@@ -131,13 +159,22 @@ struct Build: AsyncParsableCommand {
         abstract: "Resolve with swx, then build (`swift build`, or xcodebuild with --platform ios|watchos|tvos|visionos|macos)."
     )
 
-    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift build`, plus --platform/--destination/--device/--team.")
+    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift build`, plus --all (every package in turn) and --platform/--destination/--device/--team.")
     var arguments: [String] = []
 
     func run() async throws {
         var arguments = self.arguments
         if let apple = AppleArguments.extract(from: &arguments) {
             try await apple.build(action: .build, extraArguments: arguments)
+        }
+
+        // `--all`: build each package of the repository in turn.
+        if let index = arguments.firstIndex(of: AllPackages.flag) {
+            arguments.remove(at: index)
+            try await AllPackages.sequentially(arguments) { arguments in
+                try await Passthrough.runToCompletion(["build"], arguments: arguments)
+            }
+            return
         }
         try await Passthrough.run(["build"], arguments: arguments, resolution: .resolveFirst)
     }
@@ -147,7 +184,7 @@ struct Build: AsyncParsableCommand {
 struct Test: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Resolve with swx, then test (`swift test`, or xcodebuild test with --platform).")
 
-    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift test`, plus --platform/--destination/--device.")
+    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift test`, plus --selective, --all (every package in turn) and --platform/--destination/--device.")
     var arguments: [String] = []
 
     private static let selectiveFlag = "--selective"
@@ -157,6 +194,21 @@ struct Test: AsyncParsableCommand {
         var arguments = self.arguments
         if let apple = AppleArguments.extract(from: &arguments) {
             try await apple.build(action: .test, extraArguments: arguments)
+        }
+
+        // `--all`: test each package of the repository in turn, selectively if asked.
+        if let index = arguments.firstIndex(of: AllPackages.flag) {
+            arguments.remove(at: index)
+            let selective = arguments.contains(Self.selectiveFlag)
+            arguments.removeAll { $0 == Self.selectiveFlag }
+            try await AllPackages.sequentially(arguments) { arguments in
+                if selective {
+                    try await Self.runSelectively(arguments)
+                } else {
+                    try await Passthrough.runToCompletion(["test"], arguments: arguments)
+                }
+            }
+            return
         }
         guard let index = arguments.firstIndex(of: Self.selectiveFlag) else {
             try await Passthrough.run(["test"], arguments: arguments, resolution: .resolveFirst)

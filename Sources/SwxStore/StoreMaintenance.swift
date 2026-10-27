@@ -15,6 +15,7 @@ public enum StoreSection: String, CaseIterable, Sendable, CustomStringConvertibl
     case releases
     case toolchains
     case compilationCache
+    case prebuilts
     case packageIndex
     case temporary
 
@@ -32,6 +33,7 @@ public enum StoreSection: String, CaseIterable, Sendable, CustomStringConvertibl
         case .releases: return .releases
         case .toolchains: return .toolchains
         case .compilationCache: return .cas
+        case .prebuilts: return .prebuilts
         case .packageIndex: return .index
         case .temporary: return .temporary
         }
@@ -51,6 +53,7 @@ public enum StoreSection: String, CaseIterable, Sendable, CustomStringConvertibl
         case .releases: return "registry metadata"
         case .toolchains: return "toolchain fingerprints"
         case .compilationCache: return "compilation cache"
+        case .prebuilts: return "prebuilt libraries"
         case .packageIndex: return "package index"
         case .temporary: return "scratch"
         }
@@ -59,7 +62,7 @@ public enum StoreSection: String, CaseIterable, Sendable, CustomStringConvertibl
     /// How `swx cache prune` treats the section's entries.
     var pruning: Pruning {
         switch self {
-        case .repositories, .sourceTrees, .registry, .artifacts, .tools, .scripts, .tests:
+        case .repositories, .sourceTrees, .registry, .artifacts, .prebuilts, .tools, .scripts, .tests:
             return .whenUnused
         case .temporary:
             return .whenStale

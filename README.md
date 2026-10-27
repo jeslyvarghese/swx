@@ -32,6 +32,9 @@ SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed free
 - **Dependency graphs**: `swx graph` as a tree, Graphviz, Mermaid or JSON; `show-dependencies` without SwiftPM
 - **Inspection**: `why`, `outdated`, `audit` (known vulnerabilities), `licenses`, and undeclared imports, with a policy file for CI
 - **CI**: a GitHub Action, selective testing, `resolve --check`, and a remote cache (S3, HTTP or a directory) for checkouts and build outputs
+- **Monorepos**: `--all` resolves, checks, builds, tests and caches every package of a repository
+- **Publishing**: `swx publish` to an SE-0391 registry, signed, as `swift package-registry publish` does
+- **Housekeeping**: `swx cache size` and `prune` for the store and remote caches, `swx self update`
 - **Toolchains**: installs swift.org releases and snapshots, honours `.swift-version`
 - **Tools and scripts**: runs package executables like `uvx`, and single-file scripts with dependencies
 - **Verified**: every compatibility claim is checked against SwiftPM or Xcode in CI
@@ -49,6 +52,9 @@ swx graph                                # targets and the products they use, as
 swx audit                                # known vulnerabilities in your pins
 swx test --selective                     # only test targets whose inputs changed
 swx cache pull --build                   # checkouts and .build from a remote cache (CI)
+swx package resolve --all                # every package of a monorepo, one store
+swx publish mona.LinkedList 1.2.0        # to a registry, as swift package-registry publish
+swx cache prune --older-than 30d         # what no project pins and nothing used lately
 swx run --platform ios HelloApp          # build, install and launch on a simulator
 swx xcode resolve --source-packages SourcePackages
 swx toolchain install 6.4
@@ -81,6 +87,14 @@ curl -fsSL https://swx.quadratic.xyz/install.sh | sh
 
 This installs the release for your OS and CPU (macOS universal, or a static Linux binary for
 x86_64 or aarch64) into `~/.local/bin`, after checking it against the release's `SHA256SUMS`.
+`swx self update` later replaces it with the newest release, checked the same way.
+
+With Homebrew (the repository is its own tap), or with [Mint](https://github.com/yonaskolb/Mint):
+
+```sh
+brew tap jeslyvarghese/swx https://github.com/jeslyvarghese/swx && brew install swx
+mint install jeslyvarghese/swx
+```
 
 <details>
 <summary>Build swx from source</summary>

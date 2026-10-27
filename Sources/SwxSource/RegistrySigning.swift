@@ -256,7 +256,7 @@ enum SignatureVerifier {
 }
 
 /// The leaf must be a code-signing certificate.
-private struct CodeSigningPolicy: VerifierPolicy {
+struct CodeSigningPolicy: VerifierPolicy {
     let verifyingCriticalExtensions: [ASN1ObjectIdentifier] = [
         .X509ExtensionID.keyUsage,
         .X509ExtensionID.extendedKeyUsage,
@@ -272,7 +272,7 @@ private struct CodeSigningPolicy: VerifierPolicy {
 }
 
 /// Lists Apple's marker extensions so they don't count as unhandled critical extensions.
-private struct DeveloperProgramMarkerPolicy: VerifierPolicy {
+struct DeveloperProgramMarkerPolicy: VerifierPolicy {
     let verifyingCriticalExtensions: [ASN1ObjectIdentifier] = [
         SigningEntity.developerProgramMarker,
         [1, 2, 840, 113_635, 100, 6, 1, 2],
@@ -285,7 +285,7 @@ private struct DeveloperProgramMarkerPolicy: VerifierPolicy {
 }
 
 /// OCSP queries over the shared HTTP client.
-private struct OCSPRequesterOverHTTP: OCSPRequester {
+struct OCSPRequesterOverHTTP: OCSPRequester {
     private static let contentType = "application/ocsp-request"
     private static let ok = 200
 

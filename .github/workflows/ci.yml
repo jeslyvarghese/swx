@@ -32,6 +32,8 @@ jobs:
         run: Scripts/check-remote-cache.sh .build/release/swx
       - name: Store and remote pruning, self update
         run: Scripts/check-cache-prune.sh .build/release/swx --self-update
+      - name: Monorepos (--all) against SwiftPM
+        run: Scripts/check-monorepo.sh .build/release/swx
       - name: add, remove and upgrade against SwiftPM
         run: Scripts/check-manifest-edits.sh .build/release/swx
         env:
@@ -44,6 +46,8 @@ jobs:
         run: Scripts/compare-registry.sh .build/release/swx
       - name: Registry package signatures against SwiftPM
         run: Scripts/compare-registry-signing.sh .build/release/swx
+      - name: Publishing to a registry against SwiftPM
+        run: Scripts/compare-registry-publish.sh .build/release/swx
       - name: Git tag fingerprints against SwiftPM
         run: Scripts/compare-fingerprints.sh .build/release/swx
       - name: Dynamic AppleProductTypes manifests against Xcode

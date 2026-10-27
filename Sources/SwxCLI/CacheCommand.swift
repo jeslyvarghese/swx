@@ -32,6 +32,9 @@ struct CacheCommand: AsyncParsableCommand {
         @Flag(help: "Also copy the package's build outputs (.build).")
         var build = false
 
+        @Flag(help: AllPackages.help)
+        var all = false
+
         func location() throws -> String {
             guard let remote = self.remote ?? ProcessInfo.processInfo.environment[Workspace.remoteCacheVariable], !remote.isEmpty else {
                 throw ValidationError("name a remote cache with --remote or $\(Workspace.remoteCacheVariable)")
@@ -42,15 +45,26 @@ struct CacheCommand: AsyncParsableCommand {
         func transfer(_ direction: CacheDirection) async throws {
             let location = try self.location()
             let outputs: BuildOutputs = self.build ? .include : .exclude
+            guard !self.all else {
+                try await AllPackages.forEach(self.global) { options in
+                    Self.lines(try await options.makeWorkspace().transferCache(direction, remote: location, build: outputs), direction)
+                }
+                return
+            }
+
             let report = try await CommandSupport.reportingErrors {
                 try await self.global.makeWorkspace().transferCache(direction, remote: location, build: outputs)
             }
+            for line in Self.lines(report, direction) {
+                print(line)
+            }
+        }
+
+        private static func lines(_ report: CacheTransferReport, _ direction: CacheDirection) -> [String] {
             let verb = direction == .pull ? "pulled" : "pushed"
             let side = direction == .pull ? "not in the remote cache" : "not in the local store"
-            print("\(verb) \(report.transferred) entries (\(ByteCount.megabytes(report.bytes))); \(report.present) already there, \(report.unavailable) \(side)")
-            if let build = report.build {
-                print(Self.describe(build))
-            }
+            let summary = "\(verb) \(report.transferred) entries (\(ByteCount.megabytes(report.bytes))); \(report.present) already there, \(report.unavailable) \(side)"
+            return [summary] + (report.build.map { [Self.describe($0)] } ?? [])
         }
 
         private static func describe(_ match: BuildCacheMatch) -> String {

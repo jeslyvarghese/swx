@@ -168,3 +168,42 @@ public struct DependencyDeclaration: Sendable, Hashable {
         self.requirement = requirement
     }
 }
+
+/// SwiftPM's rules for a registry identity's parts (`swift package-registry publish` checks them).
+public enum RegistryIdentityRules {
+    private static let maximumScopeLength = 39
+    private static let maximumNameLength = 100
+    private static let hyphen: Character = "-"
+    private static let underscore: Character = "_"
+
+    /// Why `scope` isn't valid, or `nil` when it is: ASCII letters, digits and single inner hyphens.
+    public static func problem(scope: String) -> String? {
+        Self.problem(scope, kind: "scope", maximumLength: Self.maximumScopeLength, separators: [Self.hyphen])
+    }
+
+    /// Why `name` isn't valid, or `nil`: ASCII letters, digits, single inner hyphens and underscores.
+    public static func problem(name: String) -> String? {
+        Self.problem(name, kind: "name", maximumLength: Self.maximumNameLength, separators: [Self.hyphen, Self.underscore])
+    }
+
+    private static func problem(_ text: String, kind: String, maximumLength: Int, separators: Set<Character>) -> String? {
+        guard !text.isEmpty else { return "a package \(kind) has at least 1 character" }
+        guard text.count <= maximumLength else { return "a package \(kind) has at most \(maximumLength) characters" }
+
+        var previous: Character?
+        for character in text {
+            let isSeparator = separators.contains(character)
+            guard character.isASCII, character.isLetter || character.isNumber || isSeparator else {
+                return "a package \(kind) consists of letters, digits and \(separators.count > 1 ? "hyphens or underscores" : "hyphens")"
+            }
+            if isSeparator, previous == nil || previous.map(separators.contains) == true {
+                return "separators may not begin a package \(kind) or occur consecutively"
+            }
+            previous = character
+        }
+        guard let last = previous, !separators.contains(last) else {
+            return "separators may not end a package \(kind)"
+        }
+        return nil
+    }
+}

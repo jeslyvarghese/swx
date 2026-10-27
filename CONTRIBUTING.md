@@ -54,12 +54,16 @@ The design is **functional core, imperative shell**.
 ## Verification
 
 ```sh
-swift test                                            # 166 unit tests
+swift test                                            # 190 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-lock-check.sh                         # resolve --check and resolve vs SwiftPM, lockfiles v2 and v3
 Scripts/check-remote-cache.sh                         # swx cache push/pull through a directory and an HTTP server, and --build
 Scripts/check-manifest-edits.sh                       # add, remove and upgrade, each resolved like SwiftPM
+Scripts/check-cache-prune.sh [swx] --self-update      # cache size/prune (store and remote), self update
+Scripts/check-monorepo.sh                             # --all on a monorepo: each package vs SwiftPM, check, build, test, cache
+Scripts/compare-registry-publish.sh                   # swx publish vs swift package-registry publish: archive, signatures, request
+Scripts/compare-corpus.sh <work-dir> [swx] [first] [last]  # every Corpus/packages.txt entry resolved by SwiftPM and swx
 Scripts/compare-pin-reuse.sh                          # lockfile reuse vs SwiftPM: pins kept, new deps, changed requirements
 Scripts/compare-submodules.sh                         # nested submodules vs SwiftPM, compared file by file
 Scripts/linux/lfs-check.sh                            # Git LFS dependencies vs SwiftPM (in a Linux Swift image)

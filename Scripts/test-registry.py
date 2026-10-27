@@ -13,6 +13,13 @@ and implements the read side of the registry API:
     GET /<scope>/<name>/<version>.zip            source archive (deterministic zip)
     GET /identifiers?url=<url>                   identities for a source-control URL
     GET /availability                            200
+    PUT /<scope>/<name>/<version>                publish (SE-0391): multipart source-archive,
+                                                 source-archive-signature, metadata,
+                                                 metadata-signature; 201, or 409 if it exists
+
+A published release is stored as a prebuilt archive (below) with its signature and metadata,
+its sources extracted into the version directory; with --uploads, each request's headers and
+parts are recorded as <uploads>/<scope>.<name>-<version>.json for comparisons.
 
 A prebuilt `<root>/<scope>/<name>/<version>.zip` (e.g. from `swift package-registry publish
 --dry-run`) is served as-is, and a `<version>.sig` next to it is announced as the archive's
@@ -31,6 +38,7 @@ Options:
     --basic USER:PASS   require HTTP basic auth
     --token TOKEN       require a bearer token
     --log FILE          append one line per request
+    --uploads DIR       record publish requests here
 """
 
 import argparse
@@ -63,7 +71,8 @@ def normalized(version):
 
 
 class Registry:
-    def __init__(self, root, scm_map, basic, token, log):
+    def __init__(self, root, scm_map, basic, token, log, uploads=None):
+        self.uploads = uploads
         self.root = os.path.abspath(root)
         self.scm_map = scm_map
         self.basic = basic
@@ -108,6 +117,45 @@ class Registry:
         data = buffer.getvalue()
         self.archives[key] = data
         return data
+
+
+def parse_multipart(body, boundary):
+    """The parts of a multipart/form-data body: name, headers (lower-cased names), data."""
+    fields = []
+    for chunk in body.split(b"--" + boundary.encode())[1:]:
+        if chunk.startswith(b"--"):
+            break
+        head, _, data = chunk[2:].partition(b"\r\n\r\n")
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        headers = {}
+        for line in head.decode().split("\r\n"):
+            key, _, value = line.partition(":")
+            headers[key.strip().lower()] = value.strip()
+        name = re.search(r'name="([^"]+)"', headers.get("content-disposition", ""))
+        fields.append({"name": name.group(1) if name else "", "headers": headers, "data": data})
+    return fields
+
+
+# Headers every client sends differently, or that only describe the transfer.
+VOLATILE_HEADERS = {"host", "user-agent", "content-length", "accept-encoding", "accept-language", "connection"}
+
+
+def record_upload(directory, label, headers, boundary, fields):
+    """A comparable record of one publish request (the boundary replaced, bodies hashed)."""
+    os.makedirs(directory, exist_ok=True)
+    record = {
+        "headers": {key.lower(): value.replace(boundary, "BOUNDARY") for key, value in headers.items() if key.lower() not in VOLATILE_HEADERS},
+        "parts": [
+            {"name": field["name"], "headers": field["headers"]}
+            for field in fields
+        ],
+    }
+    with open(os.path.join(directory, label + ".json"), "w") as handle:
+        json.dump(record, handle, indent=2, sort_keys=True)
+    for field in fields:
+        with open(os.path.join(directory, f"{label}.{field['name']}"), "wb") as handle:
+            handle.write(field["data"])
 
 
 def make_handler(registry):
@@ -249,6 +297,54 @@ def make_handler(registry):
                 headers.append(("Link", ", ".join(links)))
             self.send(200, body, SWIFT_TYPE, headers)
 
+        # MARK: Publishing
+
+        def do_PUT(self):
+            if not self.authorized():
+                self.send(401, b"", headers=[("WWW-Authenticate", 'Basic realm="registry"')])
+                return
+            parts = [part for part in urlparse(self.path).path.split("/") if part]
+            if len(parts) != 3:
+                return self.problem(404, "not found")
+            scope, name, version = parts
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            match = re.search(r'boundary="?([^";]+)"?', self.headers.get("Content-Type", ""))
+            if not match:
+                return self.problem(400, "expected multipart/form-data")
+            fields = parse_multipart(body, match.group(1))
+            if SOURCE_ARCHIVE not in [field["name"] for field in fields]:
+                return self.problem(422, "no source archive")
+
+            package_dir = os.path.join(registry.root, scope, name)
+            if os.path.exists(os.path.join(package_dir, version)):
+                return self.problem(409, "release exists")
+            if registry.uploads:
+                record_upload(registry.uploads, f"{scope}.{name}-{version}", self.headers, match.group(1), fields)
+
+            # Store it as a prebuilt release: archive, signature, metadata, extracted sources.
+            os.makedirs(package_dir, exist_ok=True)
+            by_name = {field["name"]: field["data"] for field in fields}
+            with open(os.path.join(package_dir, f"{version}.zip"), "wb") as handle:
+                handle.write(by_name[SOURCE_ARCHIVE])
+            if "source-archive-signature" in by_name:
+                with open(os.path.join(package_dir, f"{version}.sig"), "wb") as handle:
+                    handle.write(by_name["source-archive-signature"])
+            if "metadata" in by_name:
+                with open(os.path.join(package_dir, f"{version}.metadata.json"), "wb") as handle:
+                    handle.write(by_name["metadata"])
+            release_dir = os.path.join(package_dir, version)
+            with zipfile.ZipFile(io.BytesIO(by_name[SOURCE_ARCHIVE])) as archive:
+                for member in archive.infolist():
+                    relative = member.filename.split("/", 1)[1] if "/" in member.filename else ""
+                    if not relative or member.is_dir():
+                        continue
+                    target = os.path.join(release_dir, relative)
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with open(target, "wb") as handle:
+                        handle.write(archive.read(member))
+            registry.archives.pop((scope.lower(), name.lower(), version), None)
+            self.send(201, b"", headers=[("Location", f"http://{self.headers['Host']}/{scope}/{name}/{version}")])
+
         def source_archive(self, scope, name, version):
             package_dir, real_scope, real_name = registry.package_dir(scope, name)
             if not package_dir or not os.path.isdir(os.path.join(package_dir, version)):
@@ -271,6 +367,7 @@ def main():
     parser.add_argument("--basic")
     parser.add_argument("--token")
     parser.add_argument("--log")
+    parser.add_argument("--uploads")
     arguments = parser.parse_args()
 
     scm_map = {}
@@ -278,7 +375,7 @@ def main():
         with open(arguments.scm_map) as handle:
             scm_map = json.load(handle)
 
-    registry = Registry(arguments.root, scm_map, arguments.basic, arguments.token, arguments.log)
+    registry = Registry(arguments.root, scm_map, arguments.basic, arguments.token, arguments.log, arguments.uploads)
     server = ThreadingHTTPServer(("127.0.0.1", arguments.port), make_handler(registry))
     print(server.server_address[1], flush=True)
     server.serve_forever()

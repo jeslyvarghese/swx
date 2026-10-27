@@ -10,9 +10,9 @@ public struct SwxCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "swx",
         abstract: "A fast, drop-in companion to SwiftPM.",
-        version: "0.4.0",
+        version: "0.5.0",
         subcommands: [
-            PackageCommand.self, Add.self, Remove.self, Upgrade.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
+            PackageCommand.self, Add.self, Remove.self, Upgrade.self, Publish.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
             Graph.self, Why.self, Outdated.self, Audit.self, Licenses.self, Inspect.self, CacheCommand.self, SelfCommand.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
         ]
     )
@@ -71,6 +71,23 @@ struct GlobalOptions: ParsableArguments {
     @Flag(name: .customLong("disable-scm-to-registry-transformation"), help: "Use git dependencies as declared (the default).")
     var disableSCMToRegistryTransformation = false
 
+    @Flag(inversion: .prefixedEnableDisable, help: "Use prebuilt swift-syntax libraries for macros (as SwiftPM 6.4 does).")
+    var experimentalPrebuilts = true
+
+    @Option(name: .customLong("experimental-prebuilts-download-url"), help: .hidden)
+    var prebuiltsDownloadURL: String?
+
+    @Option(name: .customLong("experimental-prebuilts-root-cert"), help: .hidden)
+    var prebuiltsRootCertificate: String?
+
+    var prebuilts: PrebuiltsOptions {
+        PrebuiltsOptions(
+            use: self.experimentalPrebuilts ? .enabled : .disabled,
+            downloadURL: self.prebuiltsDownloadURL.flatMap(URL.init(string:)),
+            rootCertificate: self.prebuiltsRootCertificate.map(FileSystemPaths.absolute)
+        )
+    }
+
     var registryTransformation: RegistryTransformation {
         if self.disableSCMToRegistryTransformation {
             return .disabled
@@ -116,7 +133,8 @@ struct GlobalOptions: ParsableArguments {
             maximumConcurrency: self.jobs ?? ResolverDefaults.concurrency,
             verbosity: self.verbosity,
             swiftPM: self.swiftPMSettings,
-            registryTransformation: self.registryTransformation
+            registryTransformation: self.registryTransformation,
+            prebuilts: self.prebuilts
         )
     }
 
@@ -134,10 +152,22 @@ struct Resolve: AsyncParsableCommand {
     @Flag(help: "Only check that Package.resolved is up to date (as `uv lock --check`); exit 1 if resolving would change it.")
     var check = false
 
+    @Flag(help: AllPackages.help)
+    var all = false
+
     func run() async throws {
-        guard self.check else {
+        switch (self.check, self.all) {
+        case (false, false):
             try await ResolveRunner.run(mode: .respectPins, global: self.global)
             return
+        case (false, true):
+            try await ResolveRunner.runAll(mode: .respectPins, global: self.global)
+            return
+        case (true, true):
+            try await Self.checkAll(self.global)
+            return
+        case (true, false):
+            break
         }
 
         // Nothing is written or checked out; the exit status is the answer.
@@ -155,13 +185,36 @@ struct Resolve: AsyncParsableCommand {
     }
 }
 
+extension Resolve {
+    /// `--check --all`: every package's lockfile, each failing on its own line.
+    static func checkAll(_ global: GlobalOptions) async throws {
+        try await AllPackages.forEach(global) { options in
+            switch try await options.makeWorkspace().checkLockfile() {
+            case .upToDate:
+                return ["Package.resolved is up to date"]
+            case .missing:
+                throw ValidationError("Package.resolved is missing; run `swx package resolve`")
+            case .stale(let reason):
+                throw ValidationError("Package.resolved is out of date (\(reason)); run `swx package resolve`")
+            }
+        }
+    }
+}
+
 /// `swx package update`: re-resolve to the newest allowed versions.
 struct Update: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Update package dependencies.")
 
     @OptionGroup var global: GlobalOptions
 
+    @Flag(help: AllPackages.help)
+    var all = false
+
     func run() async throws {
-        try await ResolveRunner.run(mode: .update, global: self.global)
+        guard self.all else {
+            try await ResolveRunner.run(mode: .update, global: self.global)
+            return
+        }
+        try await ResolveRunner.runAll(mode: .update, global: self.global)
     }
 }

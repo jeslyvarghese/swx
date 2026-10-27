@@ -109,6 +109,21 @@ struct ArchiveLayoutTests {
         #expect(BinaryArtifactSource.derive(in: root) == nil)
     }
 
+    /// A local binary target is the directory itself, or (like SwiftPM) the last artifact below it.
+    @Test func findsLocalArtifactsInPlace() throws {
+        let root = try self.makeDirectory([
+            "Frameworks/Kit.xcframework/Info.plist": self.xcframeworkPlist,
+            "Many/A.xcframework/Info.plist": self.xcframeworkPlist,
+            "Many/B.xcframework/Info.plist": self.xcframeworkPlist,
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let kit = root.appendingPathComponent("Frameworks/Kit.xcframework")
+        #expect(BinaryArtifactSource.deriveLocal(at: kit) == DerivedArtifact(relativePath: "", kind: .xcframework))
+        #expect(BinaryArtifactSource.deriveLocal(at: root.appendingPathComponent("Many")) != nil)
+        #expect(BinaryArtifactSource.deriveLocal(at: root.appendingPathComponent("Missing.xcframework")) == nil)
+    }
+
     @Test func rejectsLinksEscapingTheArchive() throws {
         let root = try self.makeDirectory(["Kit.xcframework/Info.plist": self.xcframeworkPlist])
         defer { try? FileManager.default.removeItem(at: root) }

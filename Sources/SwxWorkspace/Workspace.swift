@@ -135,6 +135,7 @@ public struct WorkspaceOptions: Sendable {
     public var verbosity: Verbosity
     public var swiftPM: SwiftPMSettings
     public var registryTransformation: RegistryTransformation
+    public var prebuilts: PrebuiltsOptions
 
     public init(
         root: WorkspaceRoot,
@@ -142,8 +143,10 @@ public struct WorkspaceOptions: Sendable {
         maximumConcurrency: Int,
         verbosity: Verbosity,
         swiftPM: SwiftPMSettings = SwiftPMSettings(),
-        registryTransformation: RegistryTransformation = .disabled
+        registryTransformation: RegistryTransformation = .disabled,
+        prebuilts: PrebuiltsOptions = PrebuiltsOptions()
     ) {
+        self.prebuilts = prebuilts
         self.root = root
         self.cacheDirectory = cacheDirectory
         self.maximumConcurrency = maximumConcurrency
@@ -350,7 +353,7 @@ public struct Workspace: Sendable {
         if mode == .respectPins, let resolvedFile, resolvedFile.originHash == originHash {
             // Pins name original locations; checkouts come from the mirrors.
             let pins = resolvedFile.pins.values.map { Pin(package: root.mirrors.effective($0.package), state: $0.state, originalLocation: $0.originalLocation) }
-            if Self.checkoutsMatch(pins: pins, state: state, layout: layout) {
+            if Self.checkoutsMatch(pins: pins, state: state, layout: layout), await !self.prebuiltsMissing(pins: pins, state: state) {
                 return ResolveReport(outcome: .upToDate, pins: pins, changes: [], materialized: 0)
             }
             let concurrency = self.options.maximumConcurrency
@@ -418,7 +421,10 @@ public struct Workspace: Sendable {
     public func checkLockfile() async throws -> LockfileStatus {
         let root = try await self.rootContext()
         guard let data = FileSystem.readIfPresent(root.layout.resolvedFile) else {
-            return .missing
+            // SwiftPM writes no lockfile when nothing gets pinned; then none is right.
+            let state = FileSystem.readIfPresent(root.layout.workspaceState).flatMap(WorkspaceState.decodeIfCompatible) ?? WorkspaceState(dependencies: [:])
+            let report = try await self.fullResolve(mode: .respectPins, root: root, previousPins: [:], previousState: state, catalog: .remote, effect: .dryRun)
+            return report.pins.isEmpty ? .upToDate : .missing
         }
         let resolvedFile = try ResolvedFile.decode(data)
         if resolvedFile.originHash == root.originHash {
@@ -889,9 +895,11 @@ public struct Workspace: Sendable {
         let stale = pins.filter { !Self.checkoutsMatch(pins: [$0], state: previous, layout: layout) }
 
         // Place trees, and meanwhile read each package's manifest (for its name and binary targets)
-        // and fetch its artifacts, so downloads overlap with checkouts.
+        // and fetch its artifacts, so downloads overlap with checkouts. A package's artifacts wait
+        // for its own checkout, where local binary targets live.
+        let staleIdentities = Set(stale.map(\.package.identity))
         let work = try await withThrowingTaskGroup(of: MaterializeWork.self) { group in
-            for pin in stale {
+            for pin in stale where preserved.contains(pin.package.identity) {
                 group.addTask {
                     try await self.place(pin, context: context)
                     return .checkout
@@ -901,9 +909,12 @@ public struct Workspace: Sendable {
             // Edited packages are SwiftPM's.
             for pin in pins where !preserved.contains(pin.package.identity) {
                 group.addTask {
+                    async let checkout: Void = staleIdentities.contains(pin.package.identity) ? self.place(pin, context: context) : ()
                     let manifest = try await Self.manifest(of: pin, context: context)
+                    try await checkout
                     let change: PackageChange = previous.dependencies[pin.package.identity]?.state == Self.managedDependency(for: pin).state ? .unchanged : .updated
-                    let artifacts = try await installer.install(package: pin.package, manifest: manifest, change: change)
+                    let directory = layout.directory(of: Self.managedDependency(for: pin))
+                    let artifacts = try await installer.install(package: pin.package, manifest: manifest, directory: directory, change: change)
                     return .package(pin.package.identity, name: manifest.name, artifacts)
                 }
             }
@@ -911,13 +922,15 @@ public struct Workspace: Sendable {
             for dependency in fileSystemDependencies {
                 group.addTask {
                     let manifest = try await context.loader.load(packageAt: URL(fileURLWithPath: dependency.package.kind.location))
-                    let artifacts = try await installer.install(package: dependency.package, manifest: manifest, change: .unchanged)
+                    let directory = URL(fileURLWithPath: dependency.package.kind.location)
+                    let artifacts = try await installer.install(package: dependency.package, manifest: manifest, directory: directory, change: .unchanged)
                     return .package(dependency.package.identity, name: manifest.name, artifacts)
                 }
             }
 
             group.addTask {
-                let artifacts = try await installer.install(package: rootReference, manifest: root, change: .unchanged)
+                let directory = URL(fileURLWithPath: rootReference.kind.location)
+                let artifacts = try await installer.install(package: rootReference, manifest: root, directory: directory, change: .unchanged)
                 return .package(rootReference.identity, name: root.name, artifacts)
             }
 
@@ -959,6 +972,11 @@ public struct Workspace: Sendable {
         }
 
         try installer.record(artifacts, into: &state)
+
+        // Prebuilt swift-syntax, as SwiftPM fetches it during resolution.
+        if let prebuilts = await self.placePrebuilts(for: pins, layout: layout) {
+            state.prebuilts = prebuilts
+        }
         try FileSystem.writeAtomically(try state.encode(), to: layout.workspaceState)
         return stale.count
     }
@@ -1038,7 +1056,7 @@ public struct Workspace: Sendable {
         }
     }
 
-    private func log(_ level: Verbosity, _ message: @autoclosure () -> String) {
+    func log(_ level: Verbosity, _ message: @autoclosure () -> String) {
         guard self.options.verbosity >= level else { return }
         FileHandle.standardError.write(Data("[swx] \(message())\n".utf8))
     }

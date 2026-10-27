@@ -36,6 +36,22 @@ enum ResolveRunner {
         print("\(Self.describe(report.outcome)) \(report.pins.count) package\(report.pins.count == 1 ? "" : "s") in \(Self.format(elapsed))")
     }
 
+    /// Pin changes and the summary line, for `--all` (printed under each package's path).
+    static func lines(_ report: ResolveReport, elapsed: Duration) -> [String] {
+        report.changes.map(Self.describe) + ["\(Self.describe(report.outcome)) \(report.pins.count) package\(report.pins.count == 1 ? "" : "s") in \(Self.format(elapsed))"]
+    }
+
+    /// Resolves every package under the package path (`--all`).
+    static func runAll(mode: ResolveMode, global: GlobalOptions) async throws {
+        try await AllPackages.forEach(global) { options in
+            try await Toolchains().prepare(for: options.packageURL, missing: .install) { CommandSupport.status($0) }
+            let clock = ContinuousClock()
+            let started = clock.now
+            let report = try await options.makeWorkspace().resolve(mode: mode)
+            return Self.lines(report, elapsed: clock.now - started)
+        }
+    }
+
     static func printChanges(_ report: ResolveReport) {
         for change in report.changes {
             print(Self.describe(change))

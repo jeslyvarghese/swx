@@ -17,6 +17,7 @@ public struct ToolsVersion: Sendable, Hashable, Comparable, CustomStringConverti
     public static let v5_6 = ToolsVersion(5, 6, 0)
     /// `Package.resolved` v3 is written above 5.9.
     public static let v5_9 = ToolsVersion(5, 9, 0)
+    public static let v6_0 = ToolsVersion(6, 0, 0)
 
     /// `[@swift-X.Y.Z, @swift-X.Y, @swift-X]`, most specific first.
     public var versionSpecificKeys: [String] {
@@ -52,21 +53,43 @@ extension ToolsVersion {
     public static func parse(manifest contents: String) -> ToolsVersion {
         // Only the first line matters.
         let firstLine = contents.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
-        var line = Substring(firstLine)
+        return Self.specification(onLine: String(firstLine)) ?? .v3
+    }
 
-        // Expect `//`, optional whitespace, then the label (case-insensitive).
-        guard line.hasPrefix(Self.commentMarker) else {
-            return .v3
+    /// SwiftPM's reading of the specification: on the first line, or (since Swift 6.0) on a later
+    /// one, which tools versions before 6.0 don't allow. A manifest without one is `.v3`.
+    public static func specification(of contents: String) throws -> ToolsVersion {
+        let lines = contents.split(whereSeparator: \.isNewline).map(String.init)
+        if let first = lines.first, let version = Self.specification(onLine: first) {
+            return version
         }
+        for line in lines.dropFirst() {
+            guard let version = Self.specification(onLine: line) else { continue }
+            guard version >= .v6_0 else { throw LaterLineSpecification(version: version) }
+            return version
+        }
+        return .v3
+    }
+
+    /// A tools version below 6.0 that isn't on the manifest's first line.
+    public struct LaterLineSpecification: Error, CustomStringConvertible, Sendable {
+        public let version: ToolsVersion
+
+        public var description: String {
+            "the manifest is backward-incompatible with Swift < 6.0 because the tools-version was specified in a subsequent line of the manifest, not the first line. Either move the tools-version specification or increase the required tools-version of your manifest"
+        }
+    }
+
+    /// The version on a `// swift-tools-version:` line, or `nil` when it isn't one: `//`,
+    /// optional whitespace, the label (any case), then the version up to a terminator (`;`
+    /// begins optional settings).
+    private static func specification(onLine text: String) -> ToolsVersion? {
+        var line = Substring(text)
+        guard line.hasPrefix(Self.commentMarker) else { return nil }
         line = line.dropFirst(Self.commentMarker.count).drop(while: { $0 == " " || $0 == "\t" })
-        guard line.lowercased().hasPrefix(Self.label) else {
-            return .v3
-        }
+        guard line.lowercased().hasPrefix(Self.label) else { return nil }
         line = line.dropFirst(Self.label.count).drop(while: { Self.separators.contains($0) })
-
-        // The version runs until a terminator (`;` begins optional settings).
-        let versionText = line.prefix(while: { !Self.terminators.contains($0) })
-        return Self.parse(versionText: String(versionText)) ?? .v3
+        return Self.parse(versionText: String(line.prefix(while: { !Self.terminators.contains($0) })))
     }
 
     /// Parses `X.Y` or `X.Y.Z`.
@@ -138,6 +161,11 @@ extension ToolsVersion {
             return candidate
         }
         return regularVersion <= current ? WellKnownFile.manifest : candidate
+    }
+
+    /// Whether `fileName` is a version-specific manifest (`Package@swift-5.9.swift`).
+    public static func isVersionSpecificManifestName(_ fileName: String) -> Bool {
+        Self.versionSpecificManifestVersion(fileName: fileName) != nil
     }
 
     /// `Package@swift-5.9.swift` → 5.9.0
