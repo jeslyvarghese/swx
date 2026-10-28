@@ -11,6 +11,7 @@ enum Passthrough {
     private static let packagePathOption = Self.packagePathFlag
     private static let disablePrebuiltsFlag = "--disable-experimental-prebuilts"
     private static let configPathOption = "--config-path"
+    private static let cachePathOption = "--cache-path"
     private static let securityPathOption = "--security-path"
     private static let netrcFileOption = "--netrc-file"
     private static let useRegistryIdentityFlag = "--use-registry-identity-for-scm"
@@ -49,7 +50,7 @@ enum Passthrough {
 
         if resolution == .resolveFirst {
             let prebuilts = PrebuiltsOptions(use: arguments.contains(Self.disablePrebuiltsFlag) ? .disabled : .enabled)
-            try await Self.resolve(packagePath: Self.packagePath(in: arguments), settings: Self.swiftPMSettings(in: arguments), transformation: Self.registryTransformation(in: arguments), prebuilts: prebuilts)
+            try await Self.resolve(packagePath: Self.packagePath(in: arguments), cacheDirectory: Self.cacheDirectory(in: arguments), settings: Self.swiftPMSettings(in: arguments), transformation: Self.registryTransformation(in: arguments), prebuilts: prebuilts)
         }
 
         // SwiftPM accepts `--disable-automatic-resolution` on every command that may resolve.
@@ -62,7 +63,7 @@ enum Passthrough {
         if Self.compilingCommands.contains(command) {
             invocation += await HostBuilds.cacheArguments(
                 existing: arguments,
-                cacheDirectory: nil,
+                cacheDirectory: Self.cacheDirectory(in: arguments),
                 packageDirectory: FileSystemPaths.absolute(Self.packagePath(in: arguments))
             )
         }
@@ -90,6 +91,12 @@ enum Passthrough {
             index += 1
         }
         arguments = kept
+    }
+
+    /// `--cache-path` names swx's store too, as it does for `swx package resolve`: otherwise
+    /// a build after `swx package resolve --cache-path …` resolves again into the default store.
+    static func cacheDirectory(in arguments: [String]) -> URL? {
+        Self.value(of: Self.cachePathOption, in: arguments).map(FileSystemPaths.absolute)
     }
 
     /// SwiftPM's shared locations and credential flags, read from the passed-through arguments.
@@ -133,10 +140,10 @@ enum Passthrough {
         return arguments.contains(Self.useRegistryIdentityFlag) ? .useRegistryIdentity : .disabled
     }
 
-    private static func resolve(packagePath: String, settings: SwiftPMSettings, transformation: RegistryTransformation, prebuilts: PrebuiltsOptions) async throws {
+    private static func resolve(packagePath: String, cacheDirectory: URL?, settings: SwiftPMSettings, transformation: RegistryTransformation, prebuilts: PrebuiltsOptions) async throws {
         let workspace = Workspace(options: WorkspaceOptions(
             root: .package(FileSystemPaths.absolute(packagePath)),
-            cacheDirectory: nil,
+            cacheDirectory: cacheDirectory,
             maximumConcurrency: ResolverDefaults.concurrency,
             verbosity: .normal,
             swiftPM: settings,
@@ -222,7 +229,7 @@ struct Test: AsyncParsableCommand {
         let invocation = try await Passthrough.prepare(["test"], arguments: arguments, resolution: .resolveFirst)
         let workspace = Workspace(options: WorkspaceOptions(
             root: .package(FileSystemPaths.absolute(Passthrough.packagePath(in: arguments))),
-            cacheDirectory: nil,
+            cacheDirectory: Passthrough.cacheDirectory(in: arguments),
             maximumConcurrency: ResolverDefaults.concurrency,
             verbosity: .normal,
             swiftPM: Passthrough.swiftPMSettings(in: arguments)
