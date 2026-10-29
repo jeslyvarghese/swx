@@ -15,6 +15,11 @@ public enum HostBuilds {
 
     private static let settingVariable = "SWX_BUILD_CACHE"
 
+    /// `SWX_BUILD_CACHE=0`: no compilation cache for any build, host or Apple platform.
+    static var isCachingDisabled: Bool {
+        ProcessInfo.processInfo.environment[Self.settingVariable].flatMap(Setting.init(rawValue:)) == .disabled
+    }
+
     /// Flags enabling the shared compilation cache in the store, when the toolchain supports it:
     /// SwiftPM's own `--enable-build-caching` where it exists, else the compiler's CAS under the
     /// native build system (chosen by the user, or opted into with `SWX_BUILD_CACHE=1`).

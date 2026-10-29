@@ -338,6 +338,13 @@ swx run   --platform ios HelloApp                 <span class="c"># build, insta
 swx run   --platform ios --destination device --team ABCDE12345 HelloApp
 swx test  --platform watchos                      <span class="c"># package tests on a watchOS simulator</span></pre>
             <p>Platforms: <code>ios</code>, <code>watchos</code>, <code>tvos</code>, <code>visionos</code>.</p>
+            <p>
+                Compile jobs are cached in swx's store with Xcode's compilation cache, so they outlive
+                DerivedData: after <code>rm -rf .build</code>, a simulator build of a package using swift-syntax,
+                swift-collections and swift-algorithms took 4 s instead of 17 s, on every platform. Hits need the
+                package at the same path, which CI checkouts are. Your own
+                <code>COMPILATION_CACHE_ENABLE_CACHING=…</code> wins; <code>SWX_BUILD_CACHE=0</code> turns it off.
+            </p>
         </section>
 
         <section id="xcode">
@@ -395,7 +402,7 @@ import ArgumentParser</pre>
                         <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>
                         <tr><td><code>SWX_MANIFEST_HINTS=0</code></td><td>Don't read GitHub packages' likely manifests over HTTP to start on their dependencies early (resolution reads every manifest from git either way).</td></tr>
                         <tr><td><code>SWX_REMOTE_CACHE</code></td><td>The remote cache for <code>swx cache push|pull</code>.</td></tr>
-                        <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache; <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
+                        <tr><td><code>SWX_BUILD_CACHE</code></td><td><code>0</code> disables the shared compilation cache (host and Apple platform builds); <code>1</code> opts into it with SwiftPM's native build system.</td></tr>
                         <tr><td><code>SWX_DOWNLOAD_URL</code></td><td>A mirror of the release assets, for the install script and <code>swx self update --version</code>.</td></tr>
                     </tbody>
                 </table>

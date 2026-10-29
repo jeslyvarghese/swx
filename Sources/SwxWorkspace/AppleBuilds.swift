@@ -66,6 +66,14 @@ public struct AppleBuilds: Sendable {
         self.packageDirectory.appendingPathComponent(WellKnownFile.buildDirectory).appendingPathComponent(Layout.directory)
     }
 
+    /// Xcode's compilation cache in the store: a warm cache rebuilds a cleaned package several
+    /// times faster, as long as it sits at the same path (CI checkouts do).
+    private var compilationCache: XcodeBuildDriver.CompilationCache {
+        guard !HostBuilds.isCachingDisabled else { return .disabled }
+        let store = self.options.cacheDirectory.map(Store.init(root:)) ?? Store.default()
+        return .enabled(directory: store.compilationCachePath)
+    }
+
     // MARK: Commands
 
     /// Resolves and builds; returns the products directory.
@@ -94,7 +102,8 @@ public struct AppleBuilds: Sendable {
             derivedData: self.stateDirectory.appendingPathComponent(Layout.derivedData),
             signing: .automatic(team: target.team),
             // Test runs keep the full log so failures name the failing test.
-            output: self.options.verbosity >= .verbose || action == .test ? .full : .quiet
+            output: self.options.verbosity >= .verbose || action == .test ? .full : .quiet,
+            compilationCache: self.compilationCache
         )
         let request = BuildRequest(
             packageDirectory: self.packageDirectory,

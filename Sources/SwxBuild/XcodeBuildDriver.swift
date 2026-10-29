@@ -22,6 +22,14 @@ public struct XcodeBuildDriver: BuildDriver {
         static let buildProducts = "Build/Products"
     }
 
+    /// Xcode's compilation cache (LLVM CAS) build settings.
+    private enum CacheSetting {
+        static let enable = "COMPILATION_CACHE_ENABLE_CACHING"
+        static let casPath = "COMPILATION_CACHE_CAS_PATH"
+        static let enabled = "YES"
+        static let assignment = "="
+    }
+
     public let sourcePackages: URL
     public let derivedData: URL
     /// Lets xcodebuild create or download provisioning profiles for device builds.
@@ -41,11 +49,22 @@ public struct XcodeBuildDriver: BuildDriver {
 
     public let output: Output
 
-    public init(sourcePackages: URL, derivedData: URL, signing: DeviceSigning, output: Output) {
+    /// Whether compile jobs are cached in a content-addressed store outside DerivedData.
+    public enum CompilationCache: Sendable {
+        case disabled
+        /// Xcode's own compilation cache, kept in `directory` so it outlives a deleted
+        /// DerivedData (`rm -rf .build`, a fresh CI checkout restoring only the cache).
+        case enabled(directory: URL)
+    }
+
+    public let compilationCache: CompilationCache
+
+    public init(sourcePackages: URL, derivedData: URL, signing: DeviceSigning, output: Output, compilationCache: CompilationCache) {
         self.sourcePackages = sourcePackages
         self.derivedData = derivedData
         self.signing = signing
         self.output = output
+        self.compilationCache = compilationCache
     }
 
     public func run(_ request: BuildRequest) async throws -> BuildResult {
@@ -73,6 +92,7 @@ public struct XcodeBuildDriver: BuildDriver {
         if self.output == .quiet {
             arguments.append(Flag.quiet)
         }
+        arguments += self.cacheSettings(existing: request.extraArguments)
         arguments += request.extraArguments
 
         // Stream xcodebuild's output live: builds take a while and errors must be visible.
@@ -84,6 +104,16 @@ public struct XcodeBuildDriver: BuildDriver {
         let products = self.derivedData.appendingPathComponent(Layout.buildProducts)
             .appendingPathComponent(destination.productsDirectoryName(configuration: request.configuration.capitalized))
         return BuildResult(productsDirectory: products)
+    }
+
+    /// Settings turning the compilation cache on, unless the user configures it themselves.
+    private func cacheSettings(existing: [String]) -> [String] {
+        guard case .enabled(let directory) = self.compilationCache else { return [] }
+        guard !existing.contains(where: { $0.hasPrefix(CacheSetting.enable + CacheSetting.assignment) }) else { return [] }
+        return [
+            CacheSetting.enable + CacheSetting.assignment + CacheSetting.enabled,
+            CacheSetting.casPath + CacheSetting.assignment + directory.path,
+        ]
     }
 
     /// The product's scheme for builds; the package's test scheme for tests.
