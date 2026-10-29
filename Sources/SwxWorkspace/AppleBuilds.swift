@@ -46,6 +46,10 @@ public struct AppleBuilds: Sendable {
         static let directory = "swx-xcode"
         static let sourcePackages = "SourcePackages"
         static let derivedData = "DerivedData"
+        /// Hot-reloadable builds link differently: their own DerivedData keeps both up to date.
+        static let hotDerivedData = "DerivedData-hot"
+        static let privateProject = "project"
+        static let projectWorkspace = "project.xcworkspace/xcshareddata/swiftpm"
         static let appExtension = "app"
         static let infoPlist = "Info.plist"
         static let macOSContents = "Contents"
@@ -55,23 +59,32 @@ public struct AppleBuilds: Sendable {
     }
 
     private let options: WorkspaceOptions
-    private let packageDirectory: URL
+    let packageDirectory: URL
 
     public init(options: WorkspaceOptions, packageDirectory: URL) {
         self.options = options
         self.packageDirectory = packageDirectory
     }
 
-    private var stateDirectory: URL {
+    var stateDirectory: URL {
         self.packageDirectory.appendingPathComponent(WellKnownFile.buildDirectory).appendingPathComponent(Layout.directory)
     }
+
+    var store: Store {
+        self.options.cacheDirectory.map(Store.init(root:)) ?? Store.default()
+    }
+
+    static let appExtension = Layout.appExtension
+    static let executableKey = Layout.executableKey
+    static let bundleIdentifierKey = Layout.bundleIdentifierKey
+    static let macOSContents = Layout.macOSContents
+    static let macOSExecutables = Layout.macOSExecutables
 
     /// Xcode's compilation cache in the store: a warm cache rebuilds a cleaned package several
     /// times faster, as long as it sits at the same path (CI checkouts do).
     private var compilationCache: XcodeBuildDriver.CompilationCache {
         guard !HostBuilds.isCachingDisabled else { return .disabled }
-        let store = self.options.cacheDirectory.map(Store.init(root:)) ?? Store.default()
-        return .enabled(directory: store.compilationCachePath)
+        return .enabled(directory: self.store.compilationCachePath)
     }
 
     // MARK: Commands
@@ -79,13 +92,25 @@ public struct AppleBuilds: Sendable {
     /// Resolves and builds; returns the products directory.
     @discardableResult
     public func build(product: String?, target: AppleTarget, configuration: String, action: AppleBuildAction = .build, extraArguments: [String]) async throws -> URL {
+        try await self.build(product: product, target: target, configuration: configuration, action: action, extraArguments: extraArguments, codeLoading: .standard).productsDirectory
+    }
+
+    /// Resolves and builds, hot-reloadable or not.
+    func build(
+        product: String?,
+        target: AppleTarget,
+        configuration: String,
+        action: AppleBuildAction,
+        extraArguments: [String],
+        codeLoading: BuildRequest.CodeLoading
+    ) async throws -> BuildResult {
         // Builds don't need a concrete simulator; tests and runs do.
         let destination = try await self.destination(for: target, requirement: action == .build ? .genericAllowed : .concreteRequired)
 
         // swx checks dependencies out where xcodebuild will look for them. A directory with an
         // Xcode project (and no Package.swift) resolves the project's package references instead.
         let sourcePackages = self.stateDirectory.appendingPathComponent(Layout.sourcePackages)
-        let container = self.xcodeContainer()
+        var container = self.xcodeContainer()
         let root: WorkspaceRoot = container.map { .xcodeProject($0, sourcePackages: sourcePackages) }
             ?? .packageForXcode(self.packageDirectory, sourcePackages: sourcePackages)
         let workspace = Workspace(options: WorkspaceOptions(
@@ -97,9 +122,16 @@ public struct AppleBuilds: Sendable {
         ))
         _ = try await workspace.resolve(mode: .respectPins)
 
+        // xcodebuild builds a package's app product as a bare executable: apps build from a
+        // project swx generates under .build, pinned like the package.
+        if container == nil, action == .build, let product, let project = try await self.privateProject(for: product) {
+            container = project
+        }
+
+        let derivedData = codeLoading == .hotReloadable ? Layout.hotDerivedData : Layout.derivedData
         let driver = XcodeBuildDriver(
             sourcePackages: sourcePackages,
-            derivedData: self.stateDirectory.appendingPathComponent(Layout.derivedData),
+            derivedData: self.stateDirectory.appendingPathComponent(derivedData),
             signing: .automatic(team: target.team),
             // Test runs keep the full log so failures name the failing test.
             output: self.options.verbosity >= .verbose || action == .test ? .full : .quiet,
@@ -112,9 +144,25 @@ public struct AppleBuilds: Sendable {
             product: product,
             destination: destination.destination,
             container: container,
-            extraArguments: extraArguments
+            extraArguments: extraArguments,
+            codeLoading: codeLoading
         )
-        return try await driver.run(request).productsDirectory
+        return try await driver.run(request)
+    }
+
+    /// The generated project for an app product of the package, with the package's pins.
+    private func privateProject(for product: String) async throws -> URL? {
+        let generator = XcodeProjectGenerator(options: self.options, packageDirectory: self.packageDirectory)
+        guard let project = try await generator.generatePrivateProject(for: product, in: self.stateDirectory.appendingPathComponent(Layout.privateProject)) else {
+            return nil
+        }
+        let pins = self.packageDirectory.appendingPathComponent(WellKnownFile.packageResolved)
+        if let data = FileSystem.readIfPresent(pins) {
+            let projectPins = project.appendingPathComponent(Layout.projectWorkspace)
+            try FileSystem.createDirectory(projectPins)
+            try FileSystem.writeAtomically(data, to: projectPins.appendingPathComponent(WellKnownFile.packageResolved))
+        }
+        return project
     }
 
     /// Builds the app product, installs it on the simulator/device and streams its console.
@@ -156,19 +204,19 @@ public struct AppleBuilds: Sendable {
 
     // MARK: Destinations
 
-    private struct ResolvedDestination {
+    struct ResolvedDestination {
         let destination: AppleDestination
         /// `nil` on macOS (runs in place).
         let runTarget: RunTarget?
     }
 
     /// Whether a generic destination (no specific simulator/device) is acceptable.
-    private enum DestinationRequirement {
+    enum DestinationRequirement {
         case genericAllowed
         case concreteRequired
     }
 
-    private func destination(for target: AppleTarget, requirement: DestinationRequirement) async throws -> ResolvedDestination {
+    func destination(for target: AppleTarget, requirement: DestinationRequirement) async throws -> ResolvedDestination {
         guard let platform = ApplePlatform(argument: target.platform) else {
             throw WorkspaceError(description: "unknown platform '\(target.platform)' (use \(ApplePlatform.allCases.map(\.rawValue).joined(separator: ", ")))")
         }
@@ -198,7 +246,7 @@ public struct AppleBuilds: Sendable {
     }
 
     /// Reads a key from the bundle's Info.plist (macOS bundles keep it under `Contents/`).
-    private static func infoValue(_ key: String, in app: URL, platform: ApplePlatform) throws -> String {
+    static func infoValue(_ key: String, in app: URL, platform: ApplePlatform) throws -> String {
         let plist = platform == .macOS
             ? app.appendingPathComponent(Layout.macOSContents).appendingPathComponent(Layout.infoPlist)
             : app.appendingPathComponent(Layout.infoPlist)

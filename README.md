@@ -28,6 +28,7 @@ SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed free
 - **Nothing to migrate**: reads `Package.swift` as is, honours SwiftPM's flags and configuration
 - **Xcode-aware**: prepares `SourcePackages` so `xcodebuild` builds offline
 - **Apple platforms**: build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices
+- **Hot reload**: `swx run --hot` reloads saved Swift files into the running app, SwiftUI state included, without touching the project
 - **Editing dependencies**: `swx add` goes from a package name to a resolved dependency, like `uv add`; `remove` and `upgrade` too
 - **Dependency graphs**: `swx graph` as a tree, Graphviz, Mermaid or JSON; `show-dependencies` without SwiftPM
 - **Inspection**: `why`, `outdated`, `audit` (known vulnerabilities), `licenses`, and undeclared imports, with a policy file for CI
@@ -56,6 +57,7 @@ swx package resolve --all                # every package of a monorepo, one stor
 swx publish mona.LinkedList 1.2.0        # to a registry, as swift package-registry publish
 swx cache prune --older-than 30d         # what no project pins and nothing used lately
 swx run --platform ios HelloApp          # build, install and launch on a simulator
+swx run --hot --platform ios HelloApp    # …and reload each saved file in the running app
 swx xcode resolve --source-packages SourcePackages
 swx toolchain install 6.4
 swx tool run swiftformat@0.54.0 --version

@@ -32,6 +32,7 @@ SwxWorkspace    orchestration: lockfiles, workspace state, resolution loop, mirr
  ├─ SwxBuild       BuildDriver: SwiftPM (host) and xcodebuild (Apple) backends
  ├─ SwxToolchain   swift.org releases, install, .swift-version, activation
  ├─ SwxXcode       .xcodeproj / .xcworkspace package references
+ ├─ SwxHotReload   in-app agent (C source), patch compiles, layout checks, file watching
  └─ SwxDevice      simctl / devicectl: the only module that launches apps
 SwxSource       git: ls-remote, blobless clones, batched blob reads, tree export
 SwxStore        global content-addressed store and checkout materialization
@@ -54,7 +55,7 @@ The design is **functional core, imperative shell**.
 ## Verification
 
 ```sh
-swift test                                            # 199 unit tests
+swift test                                            # 212 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-lock-check.sh                         # resolve --check and resolve vs SwiftPM, lockfiles v2 and v3

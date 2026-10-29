@@ -77,10 +77,8 @@ struct XcodeGenerate: AsyncParsableCommand {
         abstract: "Generate an .xcodeproj for the package's .iOSApplication products (via XcodeGen)."
     )
 
-    private static let defaultDeploymentTarget = "17.0"
-
     @Option(name: .customLong("ios-deployment-target"), help: "The iOS deployment target of the generated targets.")
-    var deploymentTarget: String = Self.defaultDeploymentTarget
+    var deploymentTarget: String = XcodeProjectGenerator.defaultDeploymentTarget
 
     @OptionGroup var global: GlobalOptions
 

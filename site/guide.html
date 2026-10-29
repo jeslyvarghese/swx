@@ -35,6 +35,7 @@
             <li><a href="#cache">Caches</a></li>
             <li><a href="#ci">CI</a></li>
             <li><a href="#apple">Apple platforms</a></li>
+            <li><a href="#hot-reload">Hot reload</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
             <li><a href="#toolchains">Toolchains</a></li>
             <li><a href="#tools">Tools</a></li>
@@ -335,9 +336,15 @@ swx cache push --build</pre>
 <pre>swx devices                                       <span class="c"># simulators and paired devices</span>
 swx build --platform ios                          <span class="c"># generic build when no simulator exists</span>
 swx run   --platform ios HelloApp                 <span class="c"># build, install, launch, stream console</span>
+swx run   --hot --platform ios HelloApp           <span class="c"># …and reload saved edits in the running app</span>
 swx run   --platform ios --destination device --team ABCDE12345 HelloApp
 swx test  --platform watchos                      <span class="c"># package tests on a watchOS simulator</span></pre>
             <p>Platforms: <code>ios</code>, <code>watchos</code>, <code>tvos</code>, <code>visionos</code>.</p>
+            <p>
+                xcodebuild builds a package's <code>.iOSApplication</code> as a bare executable, so
+                <code>swx run</code> builds app products from a project it generates under
+                <code>.build/swx-xcode</code> (through XcodeGen); the package itself isn't touched.
+            </p>
             <p>
                 Compile jobs are cached in swx's store with Xcode's compilation cache, so they outlive
                 DerivedData: after <code>rm -rf .build</code>, a simulator build of a package using swift-syntax,
@@ -365,6 +372,37 @@ swx test  --platform watchos                      <span class="c"># package test
                 <code>CLANG_ENABLE_PREFIX_MAPPING=YES</code>) make those builds hit too, but <code>#filePath</code>
                 and debug info then read <code>/^root/…</code>, which breaks tests that find fixtures or
                 snapshots next to their sources. swx leaves that choice to you.
+            </p>
+        </section>
+
+        <section id="hot-reload">
+            <h2>Hot reload</h2>
+            <p>
+                <code>swx run --hot</code> keeps the app running while you edit: each saved Swift file is
+                compiled alone, with the exact flags the build used for its module, and loaded into the app,
+                usually within a second. SwiftUI views redraw with the new code and keep their
+                <code>@State</code>. Nothing in the project changes: no package, no build setting in a file,
+                no <code>@ObserveInjection</code>.
+            </p>
+<pre>swx run --hot --platform ios HelloApp             <span class="c"># simulator</span>
+swx run --hot --platform macos HelloApp           <span class="c"># this Mac</span></pre>
+            <p>
+                How: the build adds <code>-Xlinker -interposable</code> and testability on xcodebuild's
+                command line (in its own DerivedData, so normal builds stay as they are), and swx inserts a
+                small agent into the app through the environment. For each save, swx asks the Swift driver for
+                that file's compile job, links the object into a patch, and the agent points the app's calls,
+                vtables and witness tables at the new functions, then marks SwiftUI's view graphs stale.
+            </p>
+            <p>
+                Some edits can't run in a process that started with the old code, and rebuild and relaunch
+                instead, saying why: a type's stored properties, enum cases, conformances or an open class's
+                methods; a view's <code>body</code> that now returns another type of view; global and static
+                stored properties (a patch would get a second copy); added or removed files and
+                <code>Package.swift</code>. A compile error is shown and waits for the next save.
+            </p>
+            <p>
+                Simulators and this Mac for now, not devices. Apps with the hardened runtime don't load the
+                agent and run without hot reload.
             </p>
         </section>
 

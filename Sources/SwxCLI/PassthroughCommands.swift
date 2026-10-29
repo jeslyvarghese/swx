@@ -329,14 +329,26 @@ struct AppleArguments {
         throw ExitCode.success
     }
 
-    func run(product: String?, arguments: [String]) async throws -> Never {
+    /// Whether a running app picks up saved edits.
+    enum Reloading {
+        case none
+        case hot
+    }
+
+    func run(product: String?, arguments: [String], reloading: Reloading) async throws -> Never {
         guard let product = product ?? self.product else {
             CommandSupport.status("error: pass the app product to run: swx run --platform \(self.target.platform) <Product>")
             throw ExitCode.failure
         }
-        try await CommandSupport.reportingErrors {
-            try await self.builds.run(product: product, target: self.target, configuration: self.configuration, arguments: arguments)
+        guard reloading == .hot else {
+            try await CommandSupport.reportingErrors {
+                try await self.builds.run(product: product, target: self.target, configuration: self.configuration, arguments: arguments)
+            }
         }
+        try await CommandSupport.reportingErrors {
+            try await self.builds.runHot(product: product, target: self.target, configuration: self.configuration, arguments: arguments) { CommandSupport.status($0) }
+        }
+        throw ExitCode.success
     }
 
     enum BuildAction {
@@ -372,16 +384,24 @@ struct Run: AsyncParsableCommand {
     )
 
     private static let releaseFlag = "--release"
+    private static let hotFlag = "--hot"
 
-    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift run`, or a .swift script followed by its arguments.")
+    @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift run`, or a .swift script followed by its arguments; --hot with --platform reloads saved edits in the running app.")
     var arguments: [String] = []
 
     func run() async throws {
-        // `swx run --platform ios App [args…]` installs and launches on a simulator or device.
+        // `swx run --platform ios [--hot] App [args…]` installs and launches on a simulator or
+        // device. `--hot` counts only before the product: what follows belongs to the app.
         var appleArguments = self.arguments
         if let apple = AppleArguments.extract(from: &appleArguments) {
+            let reloading = Self.removeHotFlag(from: &appleArguments)
             let product = appleArguments.first { !$0.hasPrefix("-") }
-            try await apple.run(product: product, arguments: Array(appleArguments.drop { $0 != product }.dropFirst()))
+            try await apple.run(product: product, arguments: Array(appleArguments.drop { $0 != product }.dropFirst()), reloading: reloading)
+        }
+        var arguments = self.arguments
+        if Self.removeHotFlag(from: &arguments) == .hot {
+            CommandSupport.status("error: --hot runs apps: swx run --hot --platform ios|tvos|watchos|visionos|macos <App>")
+            throw ExitCode.failure
         }
 
         // `swx run [--release] file.swift args…` compiles and runs a script.
@@ -391,6 +411,14 @@ struct Run: AsyncParsableCommand {
             try await Self.runScript(URL(fileURLWithPath: script), arguments: Array(rest.dropFirst()), configuration: isRelease ? .release : .debug)
         }
         try await Passthrough.run(["run"], arguments: self.arguments, resolution: .resolveFirst)
+    }
+
+    /// Takes `--hot` out of the options before the product; what follows the product is the app's.
+    private static func removeHotFlag(from arguments: inout [String]) -> AppleArguments.Reloading {
+        let product = arguments.firstIndex { !$0.hasPrefix("-") } ?? arguments.endIndex
+        guard let index = arguments[..<product].firstIndex(of: Self.hotFlag) else { return .none }
+        arguments.remove(at: index)
+        return .hot
     }
 
     private static func runScript(_ script: URL, arguments: [String], configuration: BuildConfiguration) async throws -> Never {

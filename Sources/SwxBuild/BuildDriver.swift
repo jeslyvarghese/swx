@@ -19,6 +19,16 @@ public struct BuildRequest: Sendable {
     public let container: URL?
     /// Extra arguments forwarded verbatim to the underlying tool.
     public let extraArguments: [String]
+    public let codeLoading: CodeLoading
+
+    /// How the built app's code may be replaced while it runs.
+    public enum CodeLoading: Sendable {
+        case standard
+        /// Calls go through rebindable references and every function is exported, so a patch
+        /// can replace functions in the running app (`swx run --hot`); the build reports how
+        /// it compiled each Swift module.
+        case hotReloadable
+    }
 
     public init(
         packageDirectory: URL,
@@ -27,7 +37,8 @@ public struct BuildRequest: Sendable {
         product: String?,
         destination: AppleDestination?,
         container: URL? = nil,
-        extraArguments: [String]
+        extraArguments: [String],
+        codeLoading: CodeLoading = .standard
     ) {
         self.packageDirectory = packageDirectory
         self.configuration = configuration
@@ -36,12 +47,20 @@ public struct BuildRequest: Sendable {
         self.destination = destination
         self.container = container
         self.extraArguments = extraArguments
+        self.codeLoading = codeLoading
     }
 }
 
 /// Where the outputs landed.
 public struct BuildResult: Sendable {
     public let productsDirectory: URL
+    /// How each Swift module was compiled, for hot-reloadable builds.
+    public let swiftModules: [SwiftModuleCommand]
+
+    public init(productsDirectory: URL, swiftModules: [SwiftModuleCommand] = []) {
+        self.productsDirectory = productsDirectory
+        self.swiftModules = swiftModules
+    }
 }
 
 public struct BuildError: Error, CustomStringConvertible {

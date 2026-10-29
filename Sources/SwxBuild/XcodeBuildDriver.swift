@@ -20,6 +20,23 @@ public struct XcodeBuildDriver: BuildDriver {
 
     private enum Layout {
         static let buildProducts = "Build/Products"
+        static let buildLog = "swx-build.log"
+    }
+
+    /// Settings that make an app hot-reloadable without touching its project: calls between
+    /// functions go through rebindable references (`-interposable`), internal functions are
+    /// exported (testability), and the code lives in the executable rather than a debug dylib.
+    private enum HotReloadSetting {
+        static let linkerFlags = "OTHER_LDFLAGS=$(inherited) -Xlinker -interposable"
+        static let testability = "ENABLE_TESTABILITY=YES"
+        static let debugDylib = "ENABLE_DEBUG_DYLIB=NO"
+    }
+
+    /// What `-quiet` would still show: the lines a full log is worth echoing (`file:1:2: error: …`).
+    private enum Diagnostic {
+        static let error = ": error:"
+        static let warning = ": warning:"
+        static let toolError = "error:"
     }
 
     /// Xcode's compilation cache (LLVM CAS) build settings.
@@ -89,21 +106,41 @@ public struct XcodeBuildDriver: BuildDriver {
                 arguments.append("DEVELOPMENT_TEAM=\(team)")
             }
         }
-        if self.output == .quiet {
+        if self.output == .quiet && request.codeLoading == .standard {
             arguments.append(Flag.quiet)
         }
         arguments += self.cacheSettings(existing: request.extraArguments)
-        arguments += request.extraArguments
-
-        // Stream xcodebuild's output live: builds take a while and errors must be visible.
-        let status = try await ProcessRunner.runStreaming(arguments, in: request.packageDirectory)
-        guard status == 0 else {
-            throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status))")
+        if request.codeLoading == .hotReloadable {
+            arguments += [HotReloadSetting.linkerFlags, HotReloadSetting.testability, HotReloadSetting.debugDylib]
         }
+        arguments += request.extraArguments
 
         let products = self.derivedData.appendingPathComponent(Layout.buildProducts)
             .appendingPathComponent(destination.productsDirectoryName(configuration: request.configuration.capitalized))
-        return BuildResult(productsDirectory: products)
+
+        // Stream xcodebuild's output live: builds take a while and errors must be visible.
+        guard request.codeLoading == .hotReloadable else {
+            let status = try await ProcessRunner.runStreaming(arguments, in: request.packageDirectory)
+            guard status == 0 else {
+                throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status))")
+            }
+            return BuildResult(productsDirectory: products)
+        }
+
+        // Hot reload needs the full log, which names each module's compile command; the
+        // terminal still sees only what `-quiet` would show.
+        let log = self.derivedData.appendingPathComponent(Layout.buildLog)
+        try FileSystem.createDirectory(self.derivedData)
+        let output = self.output
+        let status = try await ProcessRunner.runLogged(arguments, in: request.packageDirectory, log: log) { line in
+            output == .full || line.hasPrefix(Diagnostic.toolError) || line.contains(Diagnostic.error) || line.contains(Diagnostic.warning)
+        }
+        guard status == 0 else {
+            throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status)); full log: \(log.path)")
+        }
+        let logged = XcodeBuildLog.swiftModuleCommands(in: String(decoding: FileSystem.readIfPresent(log) ?? Data(), as: UTF8.self))
+        let modules = SwiftModuleCommandStore(derivedData: self.derivedData).merge(logged)
+        return BuildResult(productsDirectory: products, swiftModules: modules)
     }
 
     /// Settings turning the compilation cache on, unless the user configures it themselves.

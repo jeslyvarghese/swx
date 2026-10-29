@@ -48,6 +48,7 @@
                 <li><b>Familiar:</b> SwiftPM's commands and flags; anything swx doesn't handle is forwarded to <code>swift package</code>.</li>
                 <li><b>Xcode-aware:</b> prepares <code>SourcePackages</code> so <code>xcodebuild</code> builds offline.</li>
                 <li><b>Apple platforms:</b> build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices.</li>
+                <li><b>Hot reload:</b> <code>swx run --hot</code> reloads each saved Swift file into the running app, SwiftUI state included, without touching the project.</li>
                 <li><b>One-step edits:</b> <code>swx add swift-argument-parser</code> finds the package, picks its newest release and library, edits <code>Package.swift</code> and resolves; <code>remove</code> and <code>upgrade</code> too.</li>
                 <li><b>Inspection:</b> <code>why</code>, <code>outdated</code>, <code>audit</code> for known vulnerabilities, <code>licenses</code>, and undeclared imports, with a policy file for CI.</li>
                 <li><b>Fast CI:</b> a GitHub Action, selective testing, and a remote cache on S3, HTTP or a directory that restores checkouts without git and build outputs without recompiling.</li>
@@ -95,6 +96,7 @@ swx test
 swift build                <span class="c"># still works: everything is already resolved</span></pre>
 <pre id="tab-apple" role="tabpanel" hidden>swx devices                                <span class="c"># simulators and paired devices</span>
 swx run  --platform ios HelloApp           <span class="c"># build, install, launch, stream console</span>
+swx run  --hot --platform ios HelloApp     <span class="c"># reload saved edits in the running app</span>
 swx test --platform watchos                <span class="c"># package tests on a watchOS simulator</span></pre>
 <pre id="tab-xcode" role="tabpanel" hidden>swx xcode resolve --source-packages SourcePackages
 xcodebuild -clonedSourcePackagesDirPath SourcePackages \

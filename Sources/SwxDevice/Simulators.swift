@@ -158,17 +158,88 @@ public enum DeviceRunner {
     public static func installAndLaunch(app: URL, bundleIdentifier: String, on target: RunTarget, arguments: [String]) async throws -> Never {
         switch target.environment {
         case .simulator:
-            // Booting an already booted simulator is fine.
-            let boot = try await ProcessRunner.run([Self.xcrun, "simctl", "boot", target.identifier], exitPolicy: .allowFailure)
-            guard boot.succeeded || boot.exitCode == Simctl.alreadyBootedStatus || boot.errorOutput.contains(Simctl.booted) else {
-                throw DeviceError(description: "could not boot \(target.name): \(boot.errorOutput)")
-            }
-            try await ProcessRunner.run([Self.xcrun, "simctl", "install", target.identifier, app.path])
+            try await Self.bootAndInstall(app: app, on: target)
             ProcessRunner.exec([Self.xcrun, "simctl", "launch", "--console-pty", "--terminate-running-process", target.identifier, bundleIdentifier] + arguments)
 
         case .device:
             try await ProcessRunner.run([Self.xcrun, "devicectl", "device", "install", "app", "--device", target.identifier, app.path])
             ProcessRunner.exec([Self.xcrun, "devicectl", "device", "process", "launch", "--console", "--terminate-existing", "--device", target.identifier, bundleIdentifier] + arguments)
         }
+    }
+
+    /// Boots the simulator (booting a booted one is fine) and installs the app on it.
+    private static func bootAndInstall(app: URL, on target: RunTarget) async throws {
+        let boot = try await ProcessRunner.run([Self.xcrun, "simctl", "boot", target.identifier], exitPolicy: .allowFailure)
+        guard boot.succeeded || boot.exitCode == Simctl.alreadyBootedStatus || boot.errorOutput.contains(Simctl.booted) else {
+            throw DeviceError(description: "could not boot \(target.name): \(boot.errorOutput)")
+        }
+        try await ProcessRunner.run([Self.xcrun, "simctl", "install", target.identifier, app.path])
+    }
+
+    // MARK: Running alongside swx
+
+    /// simctl hands variables with this prefix to the launched app, without it.
+    private static let simulatorEnvironmentPrefix = "SIMCTL_CHILD_"
+
+    /// Installs and launches an app on a simulator, with extra environment variables, as a child
+    /// of swx: its console streams here while swx keeps working (hot reload).
+    public static func launch(app: URL, bundleIdentifier: String, on target: RunTarget, arguments: [String], environment: [String: String]) async throws -> LaunchedApp {
+        guard target.environment == .simulator else {
+            throw DeviceError(description: "\(target.name) is a device; this runs on simulators and this Mac")
+        }
+        try await Self.bootAndInstall(app: app, on: target)
+
+        var variables = ProcessInfo.processInfo.environment
+        for (name, value) in environment {
+            variables[Self.simulatorEnvironmentPrefix + name] = value
+        }
+        let identifier = target.identifier
+        return try LaunchedApp(
+            executable: URL(fileURLWithPath: LaunchedApp.environmentLauncher),
+            arguments: [Self.xcrun, "simctl", "launch", "--console-pty", "--terminate-running-process", target.identifier, bundleIdentifier] + arguments,
+            environment: variables
+        ) { _ in
+            _ = try? await ProcessRunner.run([Self.xcrun, "simctl", "terminate", identifier, bundleIdentifier], exitPolicy: .allowFailure)
+        }
+    }
+
+    /// Runs a Mac app's executable in place, with extra environment variables, as a child of swx.
+    public static func launchOnMac(executable: URL, arguments: [String], environment: [String: String]) throws -> LaunchedApp {
+        // Started directly: a protected launcher like /usr/bin/env would drop DYLD_* variables.
+        try LaunchedApp(executable: executable, arguments: arguments, environment: ProcessInfo.processInfo.environment.merging(environment) { $1 }) { process in
+            process.terminate()
+        }
+    }
+}
+
+/// An app swx launched as a child sharing this terminal, and keeps running alongside.
+public final class LaunchedApp: @unchecked Sendable {
+    static let environmentLauncher = "/usr/bin/env"
+
+    private let process = Process()
+    private let stop: @Sendable (Process) async -> Void
+    private let exit: AsyncStream<Void>
+
+    init(executable: URL, arguments: [String], environment: [String: String], stop: @escaping @Sendable (Process) async -> Void) throws {
+        self.stop = stop
+        let (exit, continuation) = AsyncStream<Void>.makeStream()
+        self.exit = exit
+
+        self.process.executableURL = executable
+        self.process.arguments = arguments
+        self.process.environment = environment
+        self.process.terminationHandler = { _ in continuation.finish() }
+        try self.process.run()
+    }
+
+    /// Returns once the app (or its console) has gone.
+    public func waitForExit() async {
+        for await _ in self.exit {}
+    }
+
+    /// Quits the app and waits for its console to close.
+    public func terminate() async {
+        await self.stop(self.process)
+        await self.waitForExit()
     }
 }

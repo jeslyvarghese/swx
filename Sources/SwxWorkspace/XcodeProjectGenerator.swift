@@ -18,6 +18,14 @@ public struct XcodeProjectGenerator: Sendable {
         static let libraryType = "library.static"
         static let iOS = "iOS"
         static let projectExtension = "xcodeproj"
+        static let generationCache = "xcodegen.cache"
+    }
+
+    /// How the spec names the package's files: relative to the package (a project generated next
+    /// to it), or absolute (a project generated elsewhere).
+    enum SpecPaths {
+        case relative
+        case absolute
     }
 
     private enum Setting {
@@ -58,34 +66,62 @@ public struct XcodeProjectGenerator: Sendable {
         self.packageDirectory = packageDirectory
     }
 
+    /// The deployment target of generated targets when none is given.
+    public static let defaultDeploymentTarget = "17.0"
+
     /// Writes `<package>/<Name>.xcodeproj` and returns it.
     public func generate(deploymentTarget: String) async throws -> URL {
+        let manifest = try await self.loadManifest()
+        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: deploymentTarget, paths: .relative)
+        return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: self.packageDirectory, projectDirectory: self.packageDirectory, cache: .none)
+    }
+
+    /// A project for building and running the app product `product` that lives in `directory`
+    /// (under `.build`), so the package itself is left untouched; `nil` when `product` isn't an app.
+    /// XcodeGen's cache skips regenerating when neither the spec nor the source files changed.
+    func generatePrivateProject(for product: String, in directory: URL) async throws -> URL? {
+        let manifest = try await self.loadManifest()
+        guard manifest.products.contains(where: { $0.name == product && $0.kind == .application }) else { return nil }
+        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: Self.defaultDeploymentTarget, paths: .absolute)
+        try FileSystem.createDirectory(directory)
+        return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: directory, projectDirectory: directory, cache: .useCache)
+    }
+
+    private func loadManifest() async throws -> Manifest {
         let store = self.options.cacheDirectory.map(Store.init(root:)) ?? Store.default()
         let toolchain = try await Toolchain.detect(store: store)
         let loader = ManifestLoader(store: store, toolchain: toolchain, maximumConcurrency: self.options.maximumConcurrency)
-        let manifest = try await loader.load(packageAt: self.packageDirectory)
+        return try await loader.load(packageAt: self.packageDirectory)
+    }
 
-        // The spec: one application target per app product, with its packages.
-        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: deploymentTarget)
-        let specFile = self.packageDirectory.appendingPathComponent(Spec.fileName)
+    /// Whether XcodeGen may skip a generation whose inputs didn't change.
+    private enum GenerationCache {
+        case none
+        case useCache
+    }
+
+    private func runXcodeGen(spec: [String: Any], name: String, specDirectory: URL, projectDirectory: URL, cache: GenerationCache) async throws -> URL {
+        // The spec sits in its directory only while XcodeGen reads it.
+        let specFile = specDirectory.appendingPathComponent(Spec.fileName)
         try FileSystem.writeAtomically(try JSONSerialization.data(withJSONObject: spec, options: [.prettyPrinted, .sortedKeys]), to: specFile)
         defer { try? FileManager.default.removeItem(at: specFile) }
 
         // XcodeGen, built and cached like any `swx tool run` tool.
         let tool = try await ToolRunner(options: self.options).prepare(ToolRunner.aliases[Self.xcodeGen] ?? Self.xcodeGen, executable: Self.xcodeGen)
-        let result = try await ProcessRunner.run(
-            [tool.executable.path, "generate", "--spec", specFile.path, "--project", self.packageDirectory.path, "--quiet"],
-            exitPolicy: .allowFailure
-        )
+        var arguments = [tool.executable.path, "generate", "--spec", specFile.path, "--project", projectDirectory.path, "--quiet"]
+        if cache == .useCache {
+            arguments += ["--use-cache", "--cache-path", specDirectory.appendingPathComponent(Spec.generationCache).path]
+        }
+        let result = try await ProcessRunner.run(arguments, exitPolicy: .allowFailure)
         guard result.succeeded else {
             throw WorkspaceError(description: "XcodeGen failed:\n\(result.output)\(result.errorOutput)")
         }
-        return self.packageDirectory.appendingPathComponent(manifest.name).appendingPathExtension(Spec.projectExtension)
+        return projectDirectory.appendingPathComponent(name).appendingPathExtension(Spec.projectExtension)
     }
 
     // MARK: Spec (pure)
 
-    static func spec(for manifest: Manifest, packageDirectory: URL, deploymentTarget: String) throws -> [String: Any] {
+    static func spec(for manifest: Manifest, packageDirectory: URL, deploymentTarget: String, paths: SpecPaths = .relative) throws -> [String: Any] {
         let applications = manifest.products.filter { $0.kind == .application }
         guard !applications.isEmpty else {
             throw WorkspaceError(description: "\(manifest.name) declares no application products (.iOSApplication)")
@@ -95,11 +131,11 @@ public struct XcodeProjectGenerator: Sendable {
         var targets: [String: Any] = [:]
         for application in applications {
             // The app's own targets become one application target…
-            let appDependencies = try Self.dependencies(of: application.targets, in: manifest, packageDirectory: packageDirectory, packages: &packages)
+            let appDependencies = try Self.dependencies(of: application.targets, in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
             targets[application.name] = [
                 "type": Spec.applicationType,
                 "platform": Spec.iOS,
-                "sources": try Self.sources(application.targets, packageDirectory: packageDirectory),
+                "sources": try Self.sources(application.targets, packageDirectory: packageDirectory, paths: paths),
                 "dependencies": appDependencies.entries,
                 "settings": ["base": Self.settings(application.application, toolsVersion: manifest.parsedToolsVersion)],
             ]
@@ -109,11 +145,11 @@ public struct XcodeProjectGenerator: Sendable {
             while let name = pending.first {
                 pending.removeFirst()
                 guard targets[name] == nil, !application.targets.contains(name) else { continue }
-                let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, packages: &packages)
+                let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
                 targets[name] = [
                     "type": Spec.libraryType,
                     "platform": Spec.iOS,
-                    "sources": try Self.sources([name], packageDirectory: packageDirectory),
+                    "sources": try Self.sources([name], packageDirectory: packageDirectory, paths: paths),
                     "dependencies": dependencies.entries,
                     "settings": ["base": [Setting.swiftVersion: Self.swiftVersion(manifest.parsedToolsVersion)]],
                 ]
@@ -130,13 +166,18 @@ public struct XcodeProjectGenerator: Sendable {
     }
 
     /// Sources must live in the default `Sources/<target>` layout.
-    private static func sources(_ targets: [String], packageDirectory: URL) throws -> [[String: String]] {
+    private static func sources(_ targets: [String], packageDirectory: URL, paths: SpecPaths) throws -> [[String: String]] {
         try targets.map { target in
             let directory = packageDirectory.appendingPathComponent(Spec.sourcesDirectory).appendingPathComponent(target)
             guard FileSystem.isDirectory(directory) else {
                 throw WorkspaceError(description: "target \(target) is not in Sources/\(target); custom target paths are not supported")
             }
-            return ["path": Spec.sourcesDirectory + "/" + target]
+            switch paths {
+            case .relative:
+                return ["path": Spec.sourcesDirectory + "/" + target]
+            case .absolute:
+                return ["path": directory.path]
+            }
         }
     }
 
@@ -145,6 +186,7 @@ public struct XcodeProjectGenerator: Sendable {
         of targets: [String],
         in manifest: Manifest,
         packageDirectory: URL,
+        paths: SpecPaths,
         packages: inout [String: [String: String]]
     ) throws -> (entries: [[String: String]], internalTargets: [String]) {
         let targetNames = Set(manifest.targets.map(\.name))
@@ -152,7 +194,7 @@ public struct XcodeProjectGenerator: Sendable {
         var internalTargets: [String] = []
 
         func addProduct(_ product: String, package packageName: String) throws {
-            let (key, package) = try Self.package(named: packageName, in: manifest, packageDirectory: packageDirectory)
+            let (key, package) = try Self.package(named: packageName, in: manifest, packageDirectory: packageDirectory, paths: paths)
             packages[key] = package
             let entry = ["package": key, "product": product]
             if !entries.contains(entry) {
@@ -185,7 +227,7 @@ public struct XcodeProjectGenerator: Sendable {
     }
 
     /// The XcodeGen package entry for a dependency, keyed by its reference name.
-    private static func package(named name: String, in manifest: Manifest, packageDirectory: URL) throws -> (String, [String: String]) {
+    private static func package(named name: String, in manifest: Manifest, packageDirectory: URL, paths: SpecPaths) throws -> (String, [String: String]) {
         guard let dependency = manifest.dependencies.first(where: { $0.referenceName.lowercased() == name.lowercased() || $0.identity.lowercased() == name.lowercased() }) else {
             throw WorkspaceError(description: "no dependency provides package '\(name)'")
         }
@@ -195,7 +237,7 @@ public struct XcodeProjectGenerator: Sendable {
         case .remote(let url):
             entry["url"] = url
         case .localSourceControl(let path), .local(let path):
-            entry["path"] = path
+            entry["path"] = paths == .absolute ? URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: packageDirectory.path, isDirectory: true)).standardizedFileURL.path : path
         case .registry(let identity):
             throw WorkspaceError(description: "registry dependency \(identity) can't be added to an Xcode project; Xcode only references packages by URL or path")
         }

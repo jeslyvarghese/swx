@@ -37,7 +37,7 @@ let package = Package(
         // Orchestration: resolved file, workspace state, resolution driver.
         .target(
             name: "SwxWorkspace",
-            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxGraph", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain", "SwxBuild", "SwxApple", "SwxDevice"]
+            dependencies: ["SwxCore", "SwxResolver", "SwxManifest", "SwxGraph", "SwxSource", "SwxStore", "SwxSystem", "SwxXcode", "SwxToolchain", "SwxBuild", "SwxApple", "SwxDevice", "SwxHotReload"]
         ),
 
         // Package and target graphs, and their printers (pure: `show-dependencies`, `swx graph`).
@@ -55,6 +55,17 @@ let package = Package(
         // Apple platforms and destinations (pure model).
         .target(
             name: "SwxApple"
+        ),
+
+        // Hot reload: the in-app agent, patch compiles, layout checks and file watching.
+        .target(
+            name: "SwxHotReload",
+            dependencies: [
+                "SwxBuild",
+                "SwxSystem",
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
+            ]
         ),
 
         // Simulators and devices: the only module that launches apps.
@@ -139,6 +150,7 @@ let package = Package(
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
         .testTarget(name: "SwxBuildTests", dependencies: ["SwxBuild", "SwxSystem"]),
+        .testTarget(name: "SwxHotReloadTests", dependencies: ["SwxHotReload", "SwxBuild"]),
         .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
         .testTarget(name: "SwxSourceTests", dependencies: [
             "SwxCore", "SwxSource", "SwxStore",

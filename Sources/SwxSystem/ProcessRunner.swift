@@ -155,6 +155,87 @@ public enum ProcessRunner {
         }
     }
 
+    /// Runs a command with its output (stdout and stderr together) written to `log`, printing only
+    /// the lines `echo` accepts: a chatty tool's log stays readable later, the terminal stays quiet.
+    public static func runLogged(
+        _ arguments: [String],
+        in directory: URL? = nil,
+        log: URL,
+        echo: @escaping @Sendable (String) -> Bool
+    ) async throws -> Int32 {
+        Trace.event("logged \(arguments.prefix(4).joined(separator: " "))")
+        guard FileManager.default.createFile(atPath: log.path, contents: nil),
+              let logHandle = FileHandle(forWritingAtPath: log.path) else {
+            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: log.path])
+        }
+        defer { try? logHandle.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: Self.environmentLauncher)
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        process.standardInput = FileHandle.nullDevice
+
+        // Copy everything to the log and echo the chosen lines, until the child closes the pipe.
+        let reader = Task {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().async {
+                    Self.copyLines(from: pipe.fileHandleForReading, to: logHandle, echo: echo)
+                    continuation.resume()
+                }
+            }
+        }
+
+        let status: Int32
+        do {
+            status = try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { finished in
+                    continuation.resume(returning: finished.terminationStatus)
+                }
+                do {
+                    try process.run()
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+        } catch {
+            try? pipe.fileHandleForWriting.close()
+            await reader.value
+            throw error
+        }
+        await reader.value
+        return status
+    }
+
+    private static let newline = UInt8(ascii: "\n")
+
+    private static func copyLines(from input: FileHandle, to log: FileHandle, echo: (String) -> Bool) {
+        var pending = Data()
+        while true {
+            let chunk = input.availableData
+            guard !chunk.isEmpty else { break }
+            log.write(chunk)
+            pending.append(chunk)
+
+            // Echo each complete line; keep a partial one for the next chunk.
+            while let end = pending.firstIndex(of: Self.newline) {
+                let line = String(decoding: pending[pending.startIndex..<end], as: UTF8.self)
+                pending.removeSubrange(pending.startIndex...end)
+                if echo(line) {
+                    FileHandle.standardOutput.write(Data((line + "\n").utf8))
+                }
+            }
+        }
+        let rest = String(decoding: pending, as: UTF8.self)
+        if !rest.isEmpty, echo(rest) {
+            FileHandle.standardOutput.write(Data((rest + "\n").utf8))
+        }
+    }
+
     /// Replaces the current process image (used for pass-through commands).
     public static func exec(_ arguments: [String]) -> Never {
         let cArguments = arguments.map { strdup($0) } + [nil]

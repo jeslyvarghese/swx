@@ -16,6 +16,7 @@ import SwxSystem
 /// tools/<key>/           built command-line tools (`swx tool run`)
 /// scripts/<key>/         generated packages for single-file scripts (`swx run file.swift`)
 /// cas/                   shared compilation cache, when the toolchain supports it
+/// agents/<key>.dylib     hot reload agents, one per SDK and target (`swx run --hot`)
 /// prebuilts/<pkg>/<ver>/ prebuilt libraries (swift-syntax for macros), as SwiftPM downloads them
 /// index/packages.json    the Swift Package Index's package list (`swx add <name>`)
 /// tests/<hash>           test targets that passed with exactly these inputs (`swx test --selective`)
@@ -37,6 +38,7 @@ public struct Store: Sendable {
         case scripts
         case toolchains
         case cas
+        case agents
         case prebuilts
         case index
         case tests
@@ -153,6 +155,11 @@ public struct Store: Sendable {
     /// The content-addressed compilation cache shared by all builds.
     public var compilationCachePath: URL {
         self.directory(.cas)
+    }
+
+    /// Hot reload agents, built per SDK and target triple.
+    public var hotReloadAgentsPath: URL {
+        self.directory(.agents)
     }
 
     /// `swift --version` output for a toolchain fingerprint.
