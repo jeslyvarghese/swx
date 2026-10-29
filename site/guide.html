@@ -345,6 +345,27 @@ swx test  --platform watchos                      <span class="c"># package test
                 package at the same path, which CI checkouts are. Your own
                 <code>COMPILATION_CACHE_ENABLE_CACHING=…</code> wins; <code>SWX_BUILD_CACHE=0</code> turns it off.
             </p>
+            <p>
+                On CI the checkout path never changes, so keeping the cache between runs is enough. Keys
+                start with the Xcode build, since a new Xcode compiles differently:
+            </p>
+<pre>- id: xcode
+  run: echo "build=$(xcodebuild -version | tail -1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+- uses: actions/cache@v4
+  with:
+    path: ~/.cache/swx/cas
+    key: swx-cas-${{ steps.xcode.outputs.build }}-${{ github.run_id }}
+    restore-keys: swx-cas-${{ steps.xcode.outputs.build }}-
+- run: swx test --platform ios</pre>
+            <p>
+                A copy at another path (a second worktree, another machine's home directory) misses: the
+                compiler keys each job on its working directory, <code>&lt;package&gt;/.swiftpm/xcode</code>.
+                Xcode's <code>SWIFT_OTHER_PREFIX_MAPPINGS</code> and <code>CLANG_OTHER_PREFIX_MAPPINGS</code>
+                (<code>&lt;package path&gt;=/^root</code>, with <code>SWIFT_ENABLE_PREFIX_MAPPING=YES</code> and
+                <code>CLANG_ENABLE_PREFIX_MAPPING=YES</code>) make those builds hit too, but <code>#filePath</code>
+                and debug info then read <code>/^root/…</code>, which breaks tests that find fixtures or
+                snapshots next to their sources. swx leaves that choice to you.
+            </p>
         </section>
 
         <section id="xcode">
