@@ -1,0 +1,12 @@
+{
+  "name": "swx",
+  "version": "0.1.0",
+  "description": "Build, test and run Swift packages and iOS/macOS apps with JSON reports, and hot reload a running app with screenshots to check edits.",
+  "author": {
+    "name": "Jesly Varghese"
+  },
+  "homepage": "https://swx.quadratic.xyz/guide.html#agents",
+  "repository": "https://github.com/jeslyvarghese/swx",
+  "license": "Apache-2.0",
+  "keywords": ["swift", "swiftpm", "ios", "xcode", "hot-reload", "mcp"]
+}

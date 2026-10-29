@@ -30,6 +30,9 @@ struct Add: AsyncParsableCommand {
     @Option(help: "Track a branch instead of releases.")
     var branch: String?
 
+    @Option(help: "text or json (default: $SWX_FORMAT, else text).")
+    var format: ReportFormat = .preferred
+
     private static let versionSeparator: Character = "@"
 
     func validate() throws {
@@ -68,6 +71,12 @@ struct Add: AsyncParsableCommand {
             try await workspace.add(request) { CommandSupport.status($0) }
         }
 
+        // `--format json`: the edit and the resolve in one object.
+        if self.format == .json {
+            try await self.printJSON(result, workspace: workspace)
+            return
+        }
+
         // What changed in Package.swift, then the resolve that follows from it.
         if result.alreadyPresent {
             print("\(result.target) already uses \(result.product) from \(result.identity)")
@@ -77,5 +86,33 @@ struct Add: AsyncParsableCommand {
             print("\(result.target) now uses \(result.product) from \(result.identity)")
         }
         try await ResolveRunner.run(mode: .respectPins, global: self.global, workspace: workspace)
+    }
+}
+
+extension Add {
+    private struct Summary: Encodable {
+        let status = "succeeded"
+        let url: String
+        let identity: String
+        let requirement: String?
+        let product: String
+        let target: String
+        let alreadyPresent: Bool
+        let resolve: ResolveRunner.ResolveSummary
+    }
+
+    private func printJSON(_ result: AddResult, workspace: Workspace) async throws {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let report = try await CommandSupport.reportingErrors { try await workspace.resolve(mode: .respectPins) }
+        JSONOutput.print(Summary(
+            url: result.url,
+            identity: result.identity,
+            requirement: result.requirement,
+            product: result.product,
+            target: result.target,
+            alreadyPresent: result.alreadyPresent,
+            resolve: ResolveRunner.ResolveSummary(report, elapsed: clock.now - started)
+        ))
     }
 }

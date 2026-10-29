@@ -36,6 +36,7 @@
             <li><a href="#ci">CI</a></li>
             <li><a href="#apple">Apple platforms</a></li>
             <li><a href="#hot-reload">Hot reload</a></li>
+            <li><a href="#agents">Agents</a></li>
             <li><a href="#xcode">Xcode projects</a></li>
             <li><a href="#toolchains">Toolchains</a></li>
             <li><a href="#tools">Tools</a></li>
@@ -404,6 +405,66 @@ swx run --hot --platform macos HelloApp           <span class="c"># this Mac</sp
                 Simulators and this Mac for now, not devices. Apps with the hardened runtime don't load the
                 agent and run without hot reload.
             </p>
+            <p>
+                <code>swx hot start</code> runs the same thing in the background, for editors and agents that
+                can't sit in a terminal: it returns once the app is running, and <code>swx hot status</code>,
+                <code>logs</code> and <code>stop</code> follow it (see <a href="#agents">Agents</a>). A build that
+                fails waits for the next save and builds again.
+            </p>
+        </section>
+
+        <section id="agents">
+            <h2>Agents</h2>
+            <p>
+                Coding agents read output, they don't watch a terminal. With <code>--format json</code> (or
+                <code>SWX_FORMAT=json</code>) every command prints one JSON object on stdout and keeps its progress
+                on stderr. Builds report each diagnostic once, with its file, line and column, instead of
+                thousands of lines of compiler log. Tests report which tests failed and why. The full log stays on
+                disk, and the report gives its path.
+            </p>
+<pre>swx build --format json
+{"status":"failed","diagnostics":[{"severity":"error","file":"/app/Sources/App/Model.swift",
+  "line":12,"column":9,"message":"cannot find 'count' in scope"}],"log":"/app/.build/swx-logs/build.log",…}
+
+swx test --format json
+{"status":"failed","tests":{"passed":41,"failed":1,"skipped":0,"failures":[{"test":"ModelTests/testTotal",
+  "issues":[{"file":"/app/Tests/ModelTests.swift","line":8,"message":"XCTAssertEqual failed: (\"3\") is not equal to (\"4\")"}]}]},…}</pre>
+            <p>
+                Errors carry a stable code and, where one is known, the fix:
+                <code>{"status":"error","error":{"code":"lockfile-stale","message":"…","fix":"swx resolve"}}</code>.
+                The exit code is 0 on success, 1 on failure and 64 for bad arguments. <code>swx run --format json
+                --timeout 30 Server</code> returns the program's output and stops it after the deadline.
+            </p>
+            <p>
+                For apps, hot reload closes the loop. The agent starts the app once, edits files, asks what its saves
+                did, and looks at the result:
+            </p>
+<pre>swx hot start --platform ios HelloApp --format json   <span class="c"># returns once the app runs and is watched</span>
+<span class="c"># …edit and save Swift files…</span>
+swx hot status --wait --format json   <span class="c"># reloaded, compile error (with diagnostics) or relaunched</span>
+swx screenshot --format json          <span class="c"># a PNG of the simulator or the Mac app's window</span>
+swx hot logs --lines 50               <span class="c"># the app's console</span>
+swx hot stop</pre>
+            <p>
+                <code>hot status --wait</code> returns once every save so far has been handled, so an agent never
+                reads a result from before its edit.
+            </p>
+            <h3>MCP and Claude Code</h3>
+            <p>
+                <code>swx mcp</code> serves the same commands as MCP tools over stdio:
+                <code>swx_build</code>, <code>swx_test</code>, <code>swx_run</code>, <code>swx_add</code>,
+                <code>swx_resolve</code>, <code>swx_devices</code>, <code>swx_hot_start</code>,
+                <code>swx_hot_status</code>, <code>swx_hot_logs</code>, <code>swx_hot_stop</code>,
+                <code>swx_outdated</code>, and <code>swx_screenshot</code>, which returns the image itself.
+            </p>
+<pre>claude mcp add swx -- swx mcp                         <span class="c"># Claude Code</span>
+/plugin install swx --marketplace jeslyvarghese/swx   <span class="c"># or the plugin: MCP server and a skill</span></pre>
+            <p>
+                Other clients take the same command (<code>swx</code> with the argument <code>mcp</code>) in their MCP
+                settings. <code>swx agent-guide</code> prints a one-page guide to paste into
+                <code>AGENTS.md</code> or <code>CLAUDE.md</code>, and the site serves it as
+                <a href="llms.txt">llms.txt</a>.
+            </p>
         </section>
 
         <section id="xcode">
@@ -456,6 +517,7 @@ import ArgumentParser</pre>
                     <tbody>
                         <tr><td><code>SWX_CACHE_DIR</code></td><td>The shared store. Default <code>~/.cache/swx</code>, or <code>$XDG_CACHE_HOME/swx</code>.</td></tr>
                         <tr><td><code>SWX_HOME</code></td><td>Toolchains. Default <code>~/.local/share/swx</code>.</td></tr>
+                        <tr><td><code>SWX_FORMAT=json</code></td><td>Every command prints one JSON object on stdout, as with <code>--format json</code>.</td></tr>
                         <tr><td><code>SWX_TRACE=1</code></td><td>A timestamped timeline of every subprocess.</td></tr>
                         <tr><td><code>SWX_STATIC_MANIFESTS=0</code></td><td>Always evaluate manifests with the compiler.</td></tr>
                         <tr><td><code>SWX_GIT_HTTP=0</code></td><td>List tags with <code>git ls-remote</code> instead of HTTP.</td></tr>

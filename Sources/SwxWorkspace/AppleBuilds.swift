@@ -75,6 +75,7 @@ public struct AppleBuilds: Sendable {
     }
 
     static let appExtension = Layout.appExtension
+    static let stateDirectoryName = Layout.directory
     static let executableKey = Layout.executableKey
     static let bundleIdentifierKey = Layout.bundleIdentifierKey
     static let macOSContents = Layout.macOSContents
@@ -102,7 +103,8 @@ public struct AppleBuilds: Sendable {
         configuration: String,
         action: AppleBuildAction,
         extraArguments: [String],
-        codeLoading: BuildRequest.CodeLoading
+        codeLoading: BuildRequest.CodeLoading,
+        output: XcodeBuildDriver.Output? = nil
     ) async throws -> BuildResult {
         // Builds don't need a concrete simulator; tests and runs do.
         let destination = try await self.destination(for: target, requirement: action == .build ? .genericAllowed : .concreteRequired)
@@ -134,7 +136,7 @@ public struct AppleBuilds: Sendable {
             derivedData: self.stateDirectory.appendingPathComponent(derivedData),
             signing: .automatic(team: target.team),
             // Test runs keep the full log so failures name the failing test.
-            output: self.options.verbosity >= .verbose || action == .test ? .full : .quiet,
+            output: output ?? (self.options.verbosity >= .verbose || action == .test ? .full : .quiet),
             compilationCache: self.compilationCache
         )
         let request = BuildRequest(
@@ -172,7 +174,7 @@ public struct AppleBuilds: Sendable {
 
         let app = products.appendingPathComponent(product).appendingPathExtension(Layout.appExtension)
         guard FileSystem.isDirectory(app) else {
-            throw WorkspaceError(description: "built \(product) but found no app bundle at \(app.path)")
+            throw WorkspaceError(description: "built \(product) but found no app bundle at \(app.path)", code: .noAppBundle, fix: "pass an app product (an .iOSApplication or an app target) to run")
         }
 
         // macOS apps simply run in place.
@@ -218,10 +220,10 @@ public struct AppleBuilds: Sendable {
 
     func destination(for target: AppleTarget, requirement: DestinationRequirement) async throws -> ResolvedDestination {
         guard let platform = ApplePlatform(argument: target.platform) else {
-            throw WorkspaceError(description: "unknown platform '\(target.platform)' (use \(ApplePlatform.allCases.map(\.rawValue).joined(separator: ", ")))")
+            throw WorkspaceError(description: "unknown platform '\(target.platform)' (use \(ApplePlatform.allCases.map(\.rawValue).joined(separator: ", ")))", code: .unknownPlatform)
         }
         guard let environment = AppleEnvironment(rawValue: target.environment.lowercased()) else {
-            throw WorkspaceError(description: "unknown destination '\(target.environment)' (use simulator or device)")
+            throw WorkspaceError(description: "unknown destination '\(target.environment)' (use simulator or device)", code: .unknownDestination)
         }
         if platform == .macOS {
             return ResolvedDestination(destination: AppleDestination(platform: .macOS, environment: .device, deviceIdentifier: nil), runTarget: nil)

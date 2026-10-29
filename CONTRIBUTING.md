@@ -24,7 +24,7 @@ Manifest parser changes must keep `swx debug manifest-parity` at 0 mismatches on
 ## Architecture
 
 ```
-SwxCLI          argument parsing and output; talks only to SwxWorkspace
+SwxCLI          argument parsing, output (text or JSON) and the MCP server; talks only to SwxWorkspace
 SwxWorkspace    orchestration: lockfiles, workspace state, resolution loop, mirrors,
                 tools, scripts, toolchain selection, Apple builds
  ├─ SwxResolver    PubGrub as a pure, sans-I/O state machine (no Foundation)
@@ -55,7 +55,7 @@ The design is **functional core, imperative shell**.
 ## Verification
 
 ```sh
-swift test                                            # 212 unit tests
+swift test                                            # 220 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-lock-check.sh                         # resolve --check and resolve vs SwiftPM, lockfiles v2 and v3

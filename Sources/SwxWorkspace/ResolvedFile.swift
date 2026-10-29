@@ -254,8 +254,14 @@ public struct ResolvedFile: Sendable, Hashable {
 
 public struct WorkspaceError: Error, CustomStringConvertible {
     public let description: String
+    /// A stable name for the failure, for tools reading `--format json`.
+    public let code: ErrorCode?
+    /// The command or change that gets past it.
+    public let fix: String?
 
-    public init(description: String) {
+    public init(description: String, code: ErrorCode? = nil, fix: String? = nil) {
         self.description = description
+        self.code = code
+        self.fix = fix
     }
 }

@@ -39,6 +39,24 @@ enum Passthrough {
         guard status == 0 else { throw ExitCode(status) }
     }
 
+    /// Resolves, then runs `swift <command> …` with its output in a log, and prints the report
+    /// (`--format json`).
+    static func report(_ command: ReportedCommand, arguments: [String], timeout: Duration? = nil) async throws -> Never {
+        let invocation = try await Self.prepare([command.rawValue], arguments: arguments, resolution: .resolveFirst)
+        let report = try await CommandSupport.reportingErrors {
+            try await HostBuilds.runReporting(invocation, command: command, packageDirectory: FileSystemPaths.absolute(Self.packagePath(in: arguments)), timeout: timeout)
+        }
+        try JSONOutput.finish(report)
+    }
+
+    /// `--format json` reports one package and one plain command.
+    static func rejectWithJSON(_ arguments: [String], flags: [String]) async throws {
+        guard let flag = flags.first(where: arguments.contains) else { return }
+        try await CommandSupport.reportingErrors {
+            throw WorkspaceError(description: "\(flag) isn't supported with --format json", code: .unsupportedOption, fix: "run without \(flag), or without --format json")
+        }
+    }
+
     /// Activates the toolchain and resolves (unless told not to); returns the `swift <command> …`
     /// invocation to run.
     static func prepare(_ command: [String], arguments: [String], resolution: Resolution) async throws -> [String] {
@@ -154,7 +172,7 @@ enum Passthrough {
             let report = try await workspace.resolve(mode: .respectPins)
             ResolveRunner.printChanges(report)
         } catch {
-            FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+            CommandSupport.report(error)
             throw ExitCode.failure
         }
     }
@@ -171,8 +189,18 @@ struct Build: AsyncParsableCommand {
 
     func run() async throws {
         var arguments = self.arguments
+        let format = OutputFormat.take(from: &arguments)
         if let apple = AppleArguments.extract(from: &arguments) {
+            if format == .json {
+                try await apple.report(action: .build, extraArguments: arguments)
+            }
             try await apple.build(action: .build, extraArguments: arguments)
+        }
+
+        // `--format json`: the build's diagnostics as one object.
+        if format == .json {
+            try await Passthrough.rejectWithJSON(arguments, flags: [AllPackages.flag])
+            try await Passthrough.report(.build, arguments: arguments)
         }
 
         // `--all`: build each package of the repository in turn.
@@ -199,8 +227,18 @@ struct Test: AsyncParsableCommand {
 
     func run() async throws {
         var arguments = self.arguments
+        let format = OutputFormat.take(from: &arguments)
         if let apple = AppleArguments.extract(from: &arguments) {
+            if format == .json {
+                try await apple.report(action: .test, extraArguments: arguments)
+            }
             try await apple.build(action: .test, extraArguments: arguments)
+        }
+
+        // `--format json`: passed, failed and skipped tests, and why each failure failed.
+        if format == .json {
+            try await Passthrough.rejectWithJSON(arguments, flags: [AllPackages.flag, Self.selectiveFlag])
+            try await Passthrough.report(.test, arguments: arguments)
         }
 
         // `--all`: test each package of the repository in turn, selectively if asked.
@@ -329,6 +367,32 @@ struct AppleArguments {
         throw ExitCode.success
     }
 
+    /// Builds or tests with the output in a log; prints the report (`--format json`).
+    func report(action: BuildAction, extraArguments: [String]) async throws -> Never {
+        let report = try await CommandSupport.reportingErrors {
+            try await self.builds.report(product: self.product, target: self.target, configuration: self.configuration, action: action.request, extraArguments: extraArguments)
+        }
+        try JSONOutput.finish(report)
+    }
+
+    /// Builds and launches the app without its console; prints the report (`--format json`).
+    func runReporting(product: String?, arguments: [String]) async throws -> Never {
+        guard let product = product ?? self.product else {
+            try await Self.missingProduct(platform: self.target.platform)
+        }
+        let report = try await CommandSupport.reportingErrors {
+            try await self.builds.runReporting(product: product, target: self.target, configuration: self.configuration, arguments: arguments)
+        }
+        try JSONOutput.finish(report)
+    }
+
+    static func missingProduct(platform: String) async throws -> Never {
+        try await CommandSupport.reportingErrors {
+            throw WorkspaceError(description: "pass the app product to run", code: .missingProduct, fix: "swx run --platform \(platform) <Product>")
+        }
+        throw ExitCode.failure
+    }
+
     /// Whether a running app picks up saved edits.
     enum Reloading {
         case none
@@ -337,16 +401,25 @@ struct AppleArguments {
 
     func run(product: String?, arguments: [String], reloading: Reloading) async throws -> Never {
         guard let product = product ?? self.product else {
-            CommandSupport.status("error: pass the app product to run: swx run --platform \(self.target.platform) <Product>")
-            throw ExitCode.failure
+            try await Self.missingProduct(platform: self.target.platform)
         }
         guard reloading == .hot else {
             try await CommandSupport.reportingErrors {
                 try await self.builds.run(product: product, target: self.target, configuration: self.configuration, arguments: arguments)
             }
         }
+        try await self.runHot(product: product, arguments: arguments)
+    }
+
+    /// Runs hot until the app exits or swx is told to stop (Ctrl-C, `swx hot stop`). A
+    /// background session records each event for `swx hot status`.
+    private func runHot(product: String, arguments: [String]) async throws -> Never {
+        let session = HotSession.current
         try await CommandSupport.reportingErrors {
-            try await self.builds.runHot(product: product, target: self.target, configuration: self.configuration, arguments: arguments) { CommandSupport.status($0) }
+            try await self.builds.runHotUntilStopped(product: product, target: self.target, configuration: self.configuration, arguments: arguments) { event in
+                CommandSupport.status(event.description)
+                session?.record(event)
+            }
         }
         throw ExitCode.success
     }
@@ -370,7 +443,14 @@ struct AppleArguments {
 struct Devices: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "List simulators and paired devices for --platform/--device.")
 
+    @Option(help: "text or json (default: $SWX_FORMAT, else text).")
+    var format: OutputFormat = .preferred
+
     func run() async throws {
+        guard self.format == .text else {
+            JSONOutput.print(try await CommandSupport.reportingErrors { try await AppleBuilds.deviceSummaries() })
+            return
+        }
         for line in try await CommandSupport.reportingErrors({ try await AppleBuilds.listTargets() }) {
             print(line)
         }
@@ -385,6 +465,8 @@ struct Run: AsyncParsableCommand {
 
     private static let releaseFlag = "--release"
     private static let hotFlag = "--hot"
+    static let detachFlag = "--detach"
+    static let timeoutOption = "--timeout"
 
     @Argument(parsing: .captureForPassthrough, help: "Arguments for `swift run`, or a .swift script followed by its arguments; --hot with --platform reloads saved edits in the running app.")
     var arguments: [String] = []
@@ -392,25 +474,60 @@ struct Run: AsyncParsableCommand {
     func run() async throws {
         // `swx run --platform ios [--hot] App [args…]` installs and launches on a simulator or
         // device. `--hot` counts only before the product: what follows belongs to the app.
-        var appleArguments = self.arguments
+        var allArguments = self.arguments
+        let format = OutputFormat.take(from: &allArguments)
+
+        var appleArguments = allArguments
         if let apple = AppleArguments.extract(from: &appleArguments) {
+            // `--hot --detach` is `swx hot start`: the run goes on in the background.
+            if Self.optionsBeforeProduct(appleArguments).contains(Self.detachFlag) {
+                var remaining = allArguments
+                remaining.removeAll { $0 == Self.detachFlag || $0 == Self.hotFlag }
+                try await HotStart.start(remaining, format: format, timeout: HotStart.defaultTimeout)
+            }
             let reloading = Self.removeHotFlag(from: &appleArguments)
             let product = appleArguments.first { !$0.hasPrefix("-") }
-            try await apple.run(product: product, arguments: Array(appleArguments.drop { $0 != product }.dropFirst()), reloading: reloading)
+            let appArguments = Array(appleArguments.drop { $0 != product }.dropFirst())
+            if format == .json {
+                guard reloading == .none else {
+                    try await Self.rejectHotJSON()
+                }
+                try await apple.runReporting(product: product, arguments: appArguments)
+            }
+            try await apple.run(product: product, arguments: appArguments, reloading: reloading)
         }
-        var arguments = self.arguments
+        var arguments = allArguments
         if Self.removeHotFlag(from: &arguments) == .hot {
-            CommandSupport.status("error: --hot runs apps: swx run --hot --platform ios|tvos|watchos|visionos|macos <App>")
-            throw ExitCode.failure
+            try await CommandSupport.reportingErrors {
+                throw WorkspaceError(description: "--hot runs apps", code: .usage, fix: "swx run --hot --platform ios|tvos|watchos|visionos|macos <App>")
+            }
+        }
+
+        // `--format json`: build and run with the output in a log, stopped at `--timeout`.
+        if format == .json {
+            let timeout = HotStatus.takeSeconds(Self.timeoutOption, from: &arguments)
+            try await Passthrough.report(.run, arguments: arguments, timeout: timeout)
         }
 
         // `swx run [--release] file.swift args…` compiles and runs a script.
-        let isRelease = self.arguments.first == Self.releaseFlag
-        let rest = isRelease ? Array(self.arguments.dropFirst()) : self.arguments
+        let isRelease = allArguments.first == Self.releaseFlag
+        let rest = isRelease ? Array(allArguments.dropFirst()) : allArguments
         if let script = rest.first, ScriptRunner.isScript(script) {
             try await Self.runScript(URL(fileURLWithPath: script), arguments: Array(rest.dropFirst()), configuration: isRelease ? .release : .debug)
         }
-        try await Passthrough.run(["run"], arguments: self.arguments, resolution: .resolveFirst)
+        try await Passthrough.run(["run"], arguments: allArguments, resolution: .resolveFirst)
+    }
+
+    private static func rejectHotJSON() async throws -> Never {
+        try await CommandSupport.reportingErrors {
+            throw WorkspaceError(description: "--hot runs until the app exits, so it has no single report", code: .unsupportedOption, fix: "swx hot start --platform <platform> <App>, then swx hot status --wait")
+        }
+        throw ExitCode.failure
+    }
+
+    /// The options before the first positional argument (the product or script).
+    private static func optionsBeforeProduct(_ arguments: [String]) -> ArraySlice<String> {
+        arguments[..<(arguments.firstIndex { !$0.hasPrefix("-") } ?? arguments.endIndex)]
     }
 
     /// Takes `--hot` out of the options before the product; what follows the product is the app's.

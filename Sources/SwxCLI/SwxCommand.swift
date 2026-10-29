@@ -13,7 +13,8 @@ public struct SwxCommand: AsyncParsableCommand {
         version: "0.6.0",
         subcommands: [
             PackageCommand.self, Add.self, Remove.self, Upgrade.self, Publish.self, Build.self, Test.self, Run.self, Resolve.self, Update.self,
-            Graph.self, Why.self, Outdated.self, Audit.self, Licenses.self, Inspect.self, CacheCommand.self, SelfCommand.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, DebugCommand.self,
+            Graph.self, Why.self, Outdated.self, Audit.self, Licenses.self, Inspect.self, CacheCommand.self, SelfCommand.self, ToolCommand.self, ToolchainCommand.self, XcodeCommand.self, Devices.self, HotCommand.self, Screenshot.self,
+            AgentGuide.self, MCPCommand.self, DebugCommand.self,
         ]
     )
 
@@ -155,10 +156,13 @@ struct Resolve: AsyncParsableCommand {
     @Flag(help: AllPackages.help)
     var all = false
 
+    @Option(help: "text or json (default: $SWX_FORMAT, else text).")
+    var format: ReportFormat = .preferred
+
     func run() async throws {
         switch (self.check, self.all) {
         case (false, false):
-            try await ResolveRunner.run(mode: .respectPins, global: self.global)
+            try await ResolveRunner.run(mode: .respectPins, global: self.global, format: self.format)
             return
         case (false, true):
             try await ResolveRunner.runAll(mode: .respectPins, global: self.global)
@@ -172,6 +176,9 @@ struct Resolve: AsyncParsableCommand {
 
         // Nothing is written or checked out; the exit status is the answer.
         let status = try await CommandSupport.reportingErrors { try await self.global.makeWorkspace().checkLockfile() }
+        if self.format == .json {
+            try Self.printJSON(status)
+        }
         switch status {
         case .upToDate:
             print("Package.resolved is up to date")
@@ -186,6 +193,20 @@ struct Resolve: AsyncParsableCommand {
 }
 
 extension Resolve {
+    /// `--check --format json`: `{"status":"up-to-date"}`, or the problem as an error code.
+    private static func printJSON(_ status: LockfileStatus) throws -> Never {
+        switch status {
+        case .upToDate:
+            JSONOutput.print(["status": "up-to-date"])
+            throw ExitCode.success
+        case .missing:
+            JSONOutput.printError(WorkspaceError(description: "Package.resolved is missing", code: .lockfileMissing, fix: "swx resolve"))
+        case .stale(let reason):
+            JSONOutput.printError(WorkspaceError(description: "Package.resolved is out of date (\(reason))", code: .lockfileStale, fix: "swx resolve"))
+        }
+        throw ExitCode.failure
+    }
+
     /// `--check --all`: every package's lockfile, each failing on its own line.
     static func checkAll(_ global: GlobalOptions) async throws {
         try await AllPackages.forEach(global) { options in
@@ -210,9 +231,12 @@ struct Update: AsyncParsableCommand {
     @Flag(help: AllPackages.help)
     var all = false
 
+    @Option(help: "text or json (default: $SWX_FORMAT, else text).")
+    var format: ReportFormat = .preferred
+
     func run() async throws {
         guard self.all else {
-            try await ResolveRunner.run(mode: .update, global: self.global)
+            try await ResolveRunner.run(mode: .update, global: self.global, format: self.format)
             return
         }
         try await ResolveRunner.runAll(mode: .update, global: self.global)

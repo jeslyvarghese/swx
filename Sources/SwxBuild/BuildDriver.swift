@@ -65,6 +65,13 @@ public struct BuildResult: Sendable {
 
 public struct BuildError: Error, CustomStringConvertible {
     public let description: String
+    /// The build's full log, when it was kept.
+    public let log: URL?
+
+    public init(description: String, log: URL? = nil) {
+        self.description = description
+        self.log = log
+    }
 }
 
 /// A build backend. Both shipping backends run Apple's open-source swift-build engine:

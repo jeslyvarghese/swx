@@ -48,6 +48,7 @@
                 <li><b>Familiar:</b> SwiftPM's commands and flags; anything swx doesn't handle is forwarded to <code>swift package</code>.</li>
                 <li><b>Xcode-aware:</b> prepares <code>SourcePackages</code> so <code>xcodebuild</code> builds offline.</li>
                 <li><b>Apple platforms:</b> build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices.</li>
+                <li><b>Built for agents:</b> <code>--format json</code> reports (diagnostics, failing tests, error codes with fixes), hot reload in the background with screenshots, and an MCP server. <a href="guide.html#agents">More</a>.</li>
                 <li><b>Hot reload:</b> <code>swx run --hot</code> reloads each saved Swift file into the running app, SwiftUI state included, without touching the project.</li>
                 <li><b>One-step edits:</b> <code>swx add swift-argument-parser</code> finds the package, picks its newest release and library, edits <code>Package.swift</code> and resolves; <code>remove</code> and <code>upgrade</code> too.</li>
                 <li><b>Inspection:</b> <code>why</code>, <code>outdated</code>, <code>audit</code> for known vulnerabilities, <code>licenses</code>, and undeclared imports, with a policy file for CI.</li>
@@ -89,6 +90,7 @@
                 <button type="button" role="tab" aria-selected="false" aria-controls="tab-apple">Apple platforms</button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="tab-xcode">Xcode project</button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="tab-script">Script</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="tab-agents">Agents</button>
             </div>
 <pre id="tab-package" role="tabpanel">swx package resolve        <span class="c"># same Package.resolved as `swift package resolve`</span>
 swx build -c release       <span class="c"># resolves, then SwiftPM builds with resolution disabled</span>
@@ -106,6 +108,11 @@ xcodebuild -clonedSourcePackagesDirPath SourcePackages \
 // .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
 
 import ArgumentParser</pre>
+<pre id="tab-agents" role="tabpanel" hidden>swx build --format json                    <span class="c"># errors with file, line, column; nothing else</span>
+swx hot start --platform ios HelloApp      <span class="c"># launch in the background with hot reload</span>
+swx hot status --wait --format json        <span class="c"># what each save did</span>
+swx screenshot                             <span class="c"># a PNG of the running app</span>
+claude mcp add swx -- swx mcp              <span class="c"># all of it as MCP tools</span></pre>
             <p class="note">The <a href="guide.html">user guide</a> covers every command.</p>
         </div>
     </section>

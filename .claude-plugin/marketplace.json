@@ -1,0 +1,17 @@
+{
+  "name": "swx",
+  "owner": {
+    "name": "Jesly Varghese"
+  },
+  "metadata": {
+    "description": "swx: fast SwiftPM-compatible builds, tests and hot reload for Swift packages and Apple apps."
+  },
+  "plugins": [
+    {
+      "name": "swx",
+      "source": "./plugins/swx",
+      "description": "Build, test and run Swift packages and iOS/macOS apps with JSON reports, and hot reload a running app with screenshots to check edits.",
+      "category": "development"
+    }
+  ]
+}

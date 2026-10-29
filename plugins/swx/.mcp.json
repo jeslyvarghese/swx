@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "swx": {
+      "command": "swx",
+      "args": ["mcp"]
+    }
+  }
+}

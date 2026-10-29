@@ -1,0 +1,61 @@
+import ArgumentParser
+import Foundation
+
+/// `swx agent-guide`: how a coding agent should use swx, in one screen.
+struct AgentGuide: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "agent-guide",
+        abstract: "Print a short guide for coding agents: which swx commands to run and how to read their output."
+    )
+
+    func run() async throws {
+        print(Self.text)
+    }
+
+    static let text = """
+    # swx for coding agents
+
+    swx is a drop-in replacement for `swift build|test|run|package` and for building Apple apps
+    with xcodebuild. It reads and writes the same files as SwiftPM and Xcode (Package.swift,
+    Package.resolved, .build, .xcodeproj), so using it changes nothing in the project.
+
+    ## Rules
+
+    - Add `--format json` (or set `SWX_FORMAT=json`) to every command. stdout is then exactly one
+      JSON object; progress goes to stderr. Exit code: 0 success, 1 failure, 64 bad arguments.
+    - Errors are `{"status":"error","error":{"code":…,"message":…,"fix":…}}`. Run `fix` when present.
+    - Full logs stay on disk; the JSON names them (`log`). Read them only when the summary isn't enough.
+
+    ## Packages
+
+        swx resolve --format json                  # resolve dependencies (respects Package.resolved)
+        swx add <url|owner/repo|name>[@1.2.3]      # add a dependency and use it in a target
+        swx build --format json                    # diagnostics: [{severity,file,line,column,message}]
+        swx test --format json [--filter X]        # tests: {passed,failed,skipped,failures:[{test,issues}]}
+        swx run --format json [--timeout 30] <exe> [args]   # output: the program's output
+
+    ## Apple apps (iOS, tvOS, watchOS, visionOS simulators; macOS)
+
+        swx devices --format json                  # simulators and devices
+        swx build --platform ios --format json     # same report, built with xcodebuild
+        swx test --platform ios --format json      # tests on a simulator
+
+    Iterate on UI with hot reload; it needs no project changes:
+
+        swx hot start --platform ios <App> --format json   # build, launch, watch; returns when running
+        # …edit and save Swift files…
+        swx hot status --wait --format json        # what your saves did: reloaded, compile error, relaunch
+        swx screenshot --format json               # PNG of the running app; look at it
+        swx hot logs --lines 50                    # the app's console
+        swx hot stop
+
+    `hot status --wait` returns once every save so far was handled. Each event has a `kind`:
+    `reloaded` (the app now runs the new code, state kept), `not-reloaded` (compile error: see
+    `diagnostics`, fix and save again), `relaunching` (the edit changed a type's layout: swx
+    rebuilt and relaunched), `build-failed` (fix and save; swx builds again on its own).
+
+    ## MCP
+
+    `swx mcp` serves all of the above as MCP tools over stdio: `claude mcp add swx -- swx mcp`.
+    """
+}

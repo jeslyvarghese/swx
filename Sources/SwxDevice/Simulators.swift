@@ -15,6 +15,13 @@ public struct RunTarget: Sendable, Hashable {
 
 public struct DeviceError: Error, CustomStringConvertible {
     public let description: String
+    /// What gets past it, when something specific does.
+    public let fix: String?
+
+    public init(description: String, fix: String? = nil) {
+        self.description = description
+        self.fix = fix
+    }
 }
 
 /// Lists, boots and drives simulators (`simctl`) and devices (`devicectl`).
@@ -168,11 +175,14 @@ public enum DeviceRunner {
     }
 
     /// Boots the simulator (booting a booted one is fine) and installs the app on it.
-    private static func bootAndInstall(app: URL, on target: RunTarget) async throws {
+    static func bootAndInstall(app: URL, on target: RunTarget) async throws {
         let boot = try await ProcessRunner.run([Self.xcrun, "simctl", "boot", target.identifier], exitPolicy: .allowFailure)
         guard boot.succeeded || boot.exitCode == Simctl.alreadyBootedStatus || boot.errorOutput.contains(Simctl.booted) else {
             throw DeviceError(description: "could not boot \(target.name): \(boot.errorOutput)")
         }
+
+        // `boot` returns early: an app launched before SpringBoard is up starts in the background.
+        _ = try? await ProcessRunner.run([Self.xcrun, "simctl", "bootstatus", target.identifier], exitPolicy: .allowFailure)
         try await ProcessRunner.run([Self.xcrun, "simctl", "install", target.identifier, app.path])
     }
 
@@ -230,6 +240,11 @@ public final class LaunchedApp: @unchecked Sendable {
         self.process.environment = environment
         self.process.terminationHandler = { _ in continuation.finish() }
         try self.process.run()
+    }
+
+    /// The launched process: the app on this Mac, simctl's console for a simulator.
+    public var processIdentifier: Int32 {
+        self.process.processIdentifier
     }
 
     /// Returns once the app (or its console) has gone.

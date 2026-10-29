@@ -29,6 +29,7 @@ SwiftPM's own files byte for byte, so `swx`, `swift` and Xcode can be mixed free
 - **Xcode-aware**: prepares `SourcePackages` so `xcodebuild` builds offline
 - **Apple platforms**: build, run and test on iOS, watchOS, tvOS and visionOS simulators and devices
 - **Hot reload**: `swx run --hot` reloads saved Swift files into the running app, SwiftUI state included, without touching the project
+- **Built for agents**: `--format json` reports (diagnostics, failing tests, error codes with fixes), background hot reload with screenshots, and an MCP server
 - **Editing dependencies**: `swx add` goes from a package name to a resolved dependency, like `uv add`; `remove` and `upgrade` too
 - **Dependency graphs**: `swx graph` as a tree, Graphviz, Mermaid or JSON; `show-dependencies` without SwiftPM
 - **Inspection**: `why`, `outdated`, `audit` (known vulnerabilities), `licenses`, and undeclared imports, with a policy file for CI
@@ -65,6 +66,31 @@ swx run greet.swift Ada                  # a script with dependencies in a comme
 ```
 
 Anything swx doesn't handle is forwarded to `swift package`.
+
+## For coding agents
+
+With `--format json` (or `SWX_FORMAT=json`), every command prints one JSON object: a build's
+errors with file, line and column, a test run's failing tests and why, or an error code with
+its fix. Apps run with hot reload in the background, so an agent can edit, check what its saves
+did and look at the result:
+
+```sh
+swx build --format json                          # {"status":"failed","diagnostics":[{"file":…,"line":12,…}]}
+swx hot start --platform ios HelloApp --format json
+swx hot status --wait --format json              # reloaded, compile error, or relaunched
+swx screenshot --format json                     # a PNG of the running app
+```
+
+`swx mcp` serves all of it as MCP tools. In Claude Code, add the server or install the plugin
+(MCP server and skill):
+
+```sh
+claude mcp add swx -- swx mcp
+/plugin install swx --marketplace jeslyvarghese/swx
+```
+
+`swx agent-guide` prints a one-page guide for `AGENTS.md` or `CLAUDE.md`. More in the
+[guide](https://swx.quadratic.xyz/guide.html#agents).
 
 ## Performance
 

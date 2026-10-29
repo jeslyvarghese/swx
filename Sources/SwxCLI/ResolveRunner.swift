@@ -15,7 +15,7 @@ enum ResolverDefaults {
 
 /// Runs a resolve and prints a SwiftPM-style summary.
 enum ResolveRunner {
-    static func run(mode: ResolveMode, global: GlobalOptions, workspace: Workspace? = nil) async throws {
+    static func run(mode: ResolveMode, global: GlobalOptions, workspace: Workspace? = nil, format: ReportFormat = .preferred) async throws {
         try await CommandSupport.prepareToolchain(for: global)
         let clock = ContinuousClock()
         let started = clock.now
@@ -25,14 +25,18 @@ enum ResolveRunner {
         do {
             report = try await (workspace ?? global.makeWorkspace()).resolve(mode: mode)
         } catch {
-            FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+            CommandSupport.report(error)
             throw ExitCode.failure
+        }
+        let elapsed = clock.now - started
+        if format == .json {
+            JSONOutput.print(ResolveSummary(report, elapsed: elapsed))
+            return
         }
         guard global.verbosity > .quiet else { return }
 
         // Pin changes, then a one-line summary.
         Self.printChanges(report)
-        let elapsed = clock.now - started
         print("\(Self.describe(report.outcome)) \(report.pins.count) package\(report.pins.count == 1 ? "" : "s") in \(Self.format(elapsed))")
     }
 
@@ -53,6 +57,11 @@ enum ResolveRunner {
     }
 
     static func printChanges(_ report: ResolveReport) {
+        // With `--format json`, stdout is the report's alone.
+        guard OutputFormat.active == .text else {
+            Self.reportChanges(report)
+            return
+        }
         for change in report.changes {
             print(Self.describe(change))
         }
@@ -89,8 +98,42 @@ enum ResolveRunner {
         }
     }
 
+    /// `swx resolve --format json`.
+    struct ResolveSummary: Encodable {
+        struct Package: Encodable {
+            let identity: String
+            let state: String
+        }
+
+        struct Change: Encodable {
+            let identity: String
+            let old: String?
+            let new: String?
+        }
+
+        let status = "succeeded"
+        let outcome: String
+        let packages: [Package]
+        let changes: [Change]
+        let seconds: Double
+
+        init(_ report: ResolveReport, elapsed: Duration) {
+            switch report.outcome {
+            case .upToDate:
+                self.outcome = "up-to-date"
+            case .restoredFromPins:
+                self.outcome = "restored"
+            case .resolved:
+                self.outcome = "resolved"
+            }
+            self.packages = report.pins.map { Package(identity: "\($0.package.identity)", state: "\($0.state)") }.sorted { $0.identity < $1.identity }
+            self.changes = report.changes.map { Change(identity: "\($0.identity)", old: $0.old.map { "\($0)" }, new: $0.new.map { "\($0)" }) }
+            self.seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / ResolveRunner.attosecondsPerSecond
+        }
+    }
+
     private static let millisecondsPerSecond = 1000.0
-    private static let attosecondsPerSecond = 1e18
+    fileprivate static let attosecondsPerSecond = 1e18
 
     private static func format(_ duration: Duration) -> String {
         let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / Self.attosecondsPerSecond

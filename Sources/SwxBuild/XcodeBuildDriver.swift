@@ -16,6 +16,7 @@ public struct XcodeBuildDriver: BuildDriver {
         static let skipMacroValidation = "-skipMacroValidation"
         static let allowProvisioningUpdates = "-allowProvisioningUpdates"
         static let quiet = "-quiet"
+        static let resultBundle = "-resultBundlePath"
     }
 
     private enum Layout {
@@ -58,10 +59,13 @@ public struct XcodeBuildDriver: BuildDriver {
     }
 
     /// How much of xcodebuild's log to show.
-    public enum Output: Sendable {
+    public enum Output: Sendable, Equatable {
         /// Warnings, errors and test results only (`-quiet`).
         case quiet
         case full
+        /// What `-quiet` shows goes to `log` instead of the terminal, and test runs write a
+        /// result bundle: for reports read by tools (`--format json`).
+        case captured(log: URL, resultBundle: URL?)
     }
 
     public let output: Output
@@ -106,8 +110,13 @@ public struct XcodeBuildDriver: BuildDriver {
                 arguments.append("DEVELOPMENT_TEAM=\(team)")
             }
         }
-        if self.output == .quiet && request.codeLoading == .standard {
+        if self.output != .full && request.codeLoading == .standard {
             arguments.append(Flag.quiet)
+        }
+        if case .captured(_, let resultBundle?) = self.output, request.action == .test {
+            // xcodebuild refuses to write over an existing bundle.
+            try? FileManager.default.removeItem(at: resultBundle)
+            arguments += [Flag.resultBundle, resultBundle.path]
         }
         arguments += self.cacheSettings(existing: request.extraArguments)
         if request.codeLoading == .hotReloadable {
@@ -117,6 +126,16 @@ public struct XcodeBuildDriver: BuildDriver {
 
         let products = self.derivedData.appendingPathComponent(Layout.buildProducts)
             .appendingPathComponent(destination.productsDirectoryName(configuration: request.configuration.capitalized))
+
+        // Captured: the log is the report's source, the terminal sees nothing.
+        if case .captured(let log, _) = self.output, request.codeLoading == .standard {
+            try FileSystem.createDirectory(log.deletingLastPathComponent())
+            let status = try await ProcessRunner.runLogged(arguments, in: request.packageDirectory, log: log) { _ in false }
+            guard status == 0 else {
+                throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status)); full log: \(log.path)", log: log)
+            }
+            return BuildResult(productsDirectory: products)
+        }
 
         // Stream xcodebuild's output live: builds take a while and errors must be visible.
         guard request.codeLoading == .hotReloadable else {
@@ -136,7 +155,7 @@ public struct XcodeBuildDriver: BuildDriver {
             output == .full || line.hasPrefix(Diagnostic.toolError) || line.contains(Diagnostic.error) || line.contains(Diagnostic.warning)
         }
         guard status == 0 else {
-            throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status)); full log: \(log.path)")
+            throw BuildError(description: "xcodebuild \(request.action.rawValue) failed (exit \(status)); full log: \(log.path)", log: log)
         }
         let logged = XcodeBuildLog.swiftModuleCommands(in: String(decoding: FileSystem.readIfPresent(log) ?? Data(), as: UTF8.self))
         let modules = SwiftModuleCommandStore(derivedData: self.derivedData).merge(logged)
