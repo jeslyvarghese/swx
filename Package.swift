@@ -138,6 +138,7 @@ let package = Package(
         .testTarget(name: "SwxXcodeTests", dependencies: ["SwxCore", "SwxXcode"]),
         .testTarget(name: "SwxToolchainTests", dependencies: ["SwxToolchain"]),
         .testTarget(name: "SwxAppleTests", dependencies: ["SwxApple", "SwxDevice"]),
+        .testTarget(name: "SwxBuildTests", dependencies: ["SwxBuild", "SwxSystem"]),
         .testTarget(name: "SwxSystemTests", dependencies: ["SwxSystem"]),
         .testTarget(name: "SwxSourceTests", dependencies: [
             "SwxCore", "SwxSource", "SwxStore",

@@ -54,7 +54,7 @@ The design is **functional core, imperative shell**.
 ## Verification
 
 ```sh
-swift test                                            # 196 unit tests
+swift test                                            # 199 unit tests
 Scripts/compare-with-swiftpm.sh <package-dir>         # differential resolve against SwiftPM
 Scripts/compare-graph.sh                              # show-dependencies vs SwiftPM in every format; swx graph renders
 Scripts/compare-lock-check.sh                         # resolve --check and resolve vs SwiftPM, lockfiles v2 and v3

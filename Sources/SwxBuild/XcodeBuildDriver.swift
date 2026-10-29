@@ -118,7 +118,7 @@ public struct XcodeBuildDriver: BuildDriver {
 
     /// The product's scheme for builds; the package's test scheme for tests.
     private func scheme(for request: BuildRequest) async throws -> String {
-        let schemes = try await Self.schemes(in: request.packageDirectory, container: request.container)
+        let schemes = try await self.cachedSchemes(for: request)
         if request.action == .test, let packageScheme = schemes.first(where: { $0.hasSuffix(Self.packageSchemeSuffix) }) {
             return packageScheme
         }
@@ -135,6 +135,20 @@ public struct XcodeBuildDriver: BuildDriver {
     }
 
     private static let packageSchemeSuffix = "-Package"
+
+    /// The remembered scheme list, or a fresh one. A remembered list missing the requested
+    /// product is listed again, so a stale entry can't turn into a wrong "no scheme" error.
+    private func cachedSchemes(for request: BuildRequest) async throws -> [String] {
+        let cache = SchemeListCache(derivedData: self.derivedData)
+        if let remembered = await cache.schemes(directory: request.packageDirectory, container: request.container),
+           request.product.map(remembered.contains) ?? true {
+            return remembered
+        }
+
+        let schemes = try await Self.schemes(in: request.packageDirectory, container: request.container)
+        await cache.remember(schemes, directory: request.packageDirectory, container: request.container)
+        return schemes
+    }
 
     private static let workspaceExtension = "xcworkspace"
 
