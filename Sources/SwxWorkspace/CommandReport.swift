@@ -43,6 +43,8 @@ extension CommandReport {
     /// A report of a finished command from its log.
     init(command: ReportedCommand, exitCode: Int32, seconds: Double, log: URL, logText: String, tests: TestReport? = nil, products: String? = nil, output: String? = nil, timedOut: Bool = false) {
         let diagnostics = BuildLog.diagnostics(in: logText)
+        // Tests are reported once some ran; a build that failed ran none.
+        let tests = tests?.isEmpty == false ? tests : nil
         let failedTests = tests.map { $0.failed > 0 } ?? false
         let explained = !diagnostics.filter { $0.severity == .error }.isEmpty || failedTests
         self.init(
