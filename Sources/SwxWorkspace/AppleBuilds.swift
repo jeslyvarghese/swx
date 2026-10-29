@@ -225,8 +225,10 @@ public struct AppleBuilds: Sendable {
         guard let environment = AppleEnvironment(rawValue: target.environment.lowercased()) else {
             throw WorkspaceError(description: "unknown destination '\(target.environment)' (use simulator or device)", code: .unknownDestination)
         }
+        // This Mac: any Mac to build for, this one to test on.
         if platform == .macOS {
-            return ResolvedDestination(destination: AppleDestination(platform: .macOS, environment: .device, deviceIdentifier: nil), runTarget: nil)
+            let architecture = requirement == .concreteRequired ? Self.hostArchitecture : nil
+            return ResolvedDestination(destination: AppleDestination(platform: .macOS, environment: .device, deviceIdentifier: nil, architecture: architecture), runTarget: nil)
         }
 
         let runTarget: RunTarget

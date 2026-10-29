@@ -245,7 +245,7 @@ extension AppleBuilds {
     }
 
     /// Simulators run the Mac's architecture; patches are compiled for it.
-    private static var hostArchitecture: String {
+    static var hostArchitecture: String {
         #if arch(arm64)
         return "arm64"
         #else

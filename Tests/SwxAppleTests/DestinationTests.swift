@@ -7,6 +7,7 @@ struct DestinationTests {
         #expect(AppleDestination(platform: .iOS, environment: .simulator, deviceIdentifier: "ABC").xcodebuildDestination == "platform=iOS Simulator,id=ABC")
         #expect(AppleDestination(platform: .watchOS, environment: .device, deviceIdentifier: nil).xcodebuildDestination == "generic/platform=watchOS")
         #expect(AppleDestination(platform: .macOS, environment: .simulator, deviceIdentifier: nil).xcodebuildDestination == "generic/platform=macOS")
+        #expect(AppleDestination(platform: .macOS, environment: .device, deviceIdentifier: nil, architecture: "arm64").xcodebuildDestination == "platform=macOS,arch=arm64")
     }
 
     @Test func namesProductDirectories() {

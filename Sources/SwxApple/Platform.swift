@@ -98,17 +98,23 @@ public struct AppleDestination: Sendable, Hashable, CustomStringConvertible {
     public let environment: AppleEnvironment
     /// A simulator UDID or device identifier; `nil` builds for the generic destination.
     public let deviceIdentifier: String?
+    /// This Mac's architecture, for macOS destinations that must be concrete (tests).
+    public let architecture: String?
 
-    public init(platform: ApplePlatform, environment: AppleEnvironment, deviceIdentifier: String?) {
+    public init(platform: ApplePlatform, environment: AppleEnvironment, deviceIdentifier: String?, architecture: String? = nil) {
         self.platform = platform
         // macOS has no simulator: everything runs on this Mac.
         self.environment = platform == .macOS ? .device : environment
         self.deviceIdentifier = deviceIdentifier
+        self.architecture = architecture
     }
 
     /// The `-destination` argument for xcodebuild.
     public var xcodebuildDestination: String {
         let platform = self.platform.destinationPlatform(for: self.environment)
+        if self.platform == .macOS, let architecture {
+            return "platform=\(platform),arch=\(architecture)"
+        }
         guard let deviceIdentifier else {
             return "generic/platform=\(platform)"
         }
