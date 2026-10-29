@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: A release tag such as v0.6.0, or latest.
+    description: A release tag such as v0.7.0, or latest.
     default: latest
   install-dir:
     description: Where to put swx and swift-x.

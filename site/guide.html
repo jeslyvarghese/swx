@@ -312,7 +312,7 @@ swx cache push --build</pre>
       AWS_REGION: eu-west-1
     steps:
       - uses: actions/checkout@v4
-      - uses: jeslyvarghese/swx@v0.6.0      <span class="c"># with: version: v0.6.0 (default: latest)</span>
+      - uses: jeslyvarghese/swx@v0.7.0      <span class="c"># with: version: v0.7.0 (default: latest)</span>
       - run: swx cache pull --build
       - run: swx package resolve --check    <span class="c"># Package.resolved is committed and current</span>
       - run: swx audit                      <span class="c"># honours .swx/policy.json</span>
