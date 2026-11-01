@@ -11,6 +11,39 @@ public struct RunTarget: Sendable, Hashable {
     /// `27.0` for simulators; the OS version for devices when known.
     public let osVersion: String
     public let isBooted: Bool
+    public let family: DeviceFamily
+
+    public init(identifier: String, name: String, platform: ApplePlatform, environment: AppleEnvironment, osVersion: String, isBooted: Bool, family: DeviceFamily) {
+        self.identifier = identifier
+        self.name = name
+        self.platform = platform
+        self.environment = environment
+        self.osVersion = osVersion
+        self.isBooted = isBooted
+        self.family = family
+    }
+}
+
+/// The kind of device, as an app's supported device families name them.
+public enum DeviceFamily: String, Sendable, Hashable, CaseIterable {
+    case phone
+    case pad
+    case other
+
+    /// Device-type prefixes (`com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro`, or a
+    /// devicectl `deviceType` of `iPhone`) for each family.
+    private static let prefixes: [(String, DeviceFamily)] = [("iPhone", .phone), ("iPad", .pad)]
+    private static let simulatorTypePrefix = "com.apple.CoreSimulator.SimDeviceType."
+
+    /// The family of a simulator device type or a physical device type; `.other` otherwise.
+    public init(deviceType: String?) {
+        guard let deviceType else {
+            self = .other
+            return
+        }
+        let name = deviceType.hasPrefix(Self.simulatorTypePrefix) ? String(deviceType.dropFirst(Self.simulatorTypePrefix.count)) : deviceType
+        self = Self.prefixes.first { name.hasPrefix($0.0) }?.1 ?? .other
+    }
 }
 
 public struct DeviceError: Error, CustomStringConvertible {
@@ -32,6 +65,7 @@ public enum DeviceRunner {
         static let runtimePrefix = "com.apple.CoreSimulator.SimRuntime."
         static let booted = "Booted"
         static let alreadyBootedStatus: Int32 = 149
+        static let deviceTypeKey = "deviceTypeIdentifier"
     }
 
     private static let xcrun = "xcrun"
@@ -56,7 +90,8 @@ public enum DeviceRunner {
                     platform: platform,
                     environment: .simulator,
                     osVersion: version,
-                    isBooted: (entry["state"] as? String) == Simctl.booted
+                    isBooted: (entry["state"] as? String) == Simctl.booted,
+                    family: DeviceFamily(deviceType: entry[Simctl.deviceTypeKey] as? String)
                 ))
             }
         }
@@ -77,6 +112,7 @@ public enum DeviceRunner {
     private static let realityKey = "reality"
     private static let physicalReality = "physical"
     private static let udidKey = "udid"
+    private static let deviceTypeKey = "deviceType"
 
     /// Physical devices known to CoreDevice (paired, possibly offline).
     public static func devices() async throws -> [RunTarget] {
@@ -115,27 +151,39 @@ public enum DeviceRunner {
                 platform: platform,
                 environment: .device,
                 osVersion: properties["osVersionNumber"] as? String ?? "",
-                isBooted: true
+                isBooted: true,
+                family: DeviceFamily(deviceType: hardware[Self.deviceTypeKey] as? String)
             )
         }
     }
 
     /// The simulator to use: by name/UDID, else a booted one, else the newest runtime's first device.
-    public static func pickSimulator(for platform: ApplePlatform, matching query: String?) async throws -> RunTarget {
+    public static func pickSimulator(for platform: ApplePlatform, matching query: String?, preferring families: Set<DeviceFamily> = []) async throws -> RunTarget {
         let candidates = try await Self.simulators().filter { $0.platform == platform }
+        return try Self.chooseSimulator(from: candidates, platform: platform, matching: query, preferring: families)
+    }
+
+    /// The choice itself (pure): by name/UDID; else, among simulators of the app's device
+    /// families (all of them when none match), a booted one, else the newest runtime's first.
+    static func chooseSimulator(from candidates: [RunTarget], platform: ApplePlatform, matching query: String?, preferring families: Set<DeviceFamily>) throws -> RunTarget {
         if let query {
             guard let match = candidates.first(where: { $0.identifier == query || $0.name == query }) else {
                 throw DeviceError(description: "no available \(platform) simulator named '\(query)'")
             }
             return match
         }
-        if let booted = candidates.first(where: \.isBooted) {
+
+        // An iPhone-only app shouldn't launch on an iPad that happens to be booted.
+        let matching = candidates.filter { families.contains($0.family) }
+        let pool = matching.isEmpty ? candidates : matching
+
+        if let booted = pool.first(where: \.isBooted) {
             return booted
         }
-        guard let newest = candidates.max(by: { Self.compareVersions($0.osVersion, $1.osVersion) }) else {
+        guard let newest = pool.max(by: { Self.compareVersions($0.osVersion, $1.osVersion) }) else {
             throw DeviceError(description: "no \(platform) simulators are installed (Xcode → Settings → Components)")
         }
-        return candidates.first { $0.osVersion == newest.osVersion } ?? newest
+        return pool.first { $0.osVersion == newest.osVersion } ?? newest
     }
 
     public static func pickDevice(for platform: ApplePlatform, matching query: String?) async throws -> RunTarget {

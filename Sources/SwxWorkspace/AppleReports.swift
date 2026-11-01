@@ -53,7 +53,7 @@ extension AppleBuilds {
     /// Builds the app and launches it in the background (a simulator, or this Mac with its
     /// output in a log); the report names the app.
     public func runReporting(product: String, target: AppleTarget, configuration: String, arguments: [String]) async throws -> CommandReport {
-        let destination = try await self.destination(for: target, requirement: .concreteRequired)
+        let destination = try await self.destination(for: target, requirement: .concreteRequired, product: product)
         let build = try await self.report(product: product, target: target, configuration: configuration, action: .build, extraArguments: [])
         guard build.status == .succeeded, let products = build.products else { return build }
 

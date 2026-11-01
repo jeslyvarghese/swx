@@ -35,7 +35,7 @@ extension AppleBuilds {
     /// (which quits the app and throws `CancellationError`). A failed build waits for the next
     /// save and builds again.
     public func runHot(product: String, target: AppleTarget, configuration: String, arguments: [String], observe: @escaping @Sendable (HotEvent) -> Void) async throws {
-        let destination = try await self.destination(for: target, requirement: .concreteRequired)
+        let destination = try await self.destination(for: target, requirement: .concreteRequired, product: product)
         if let runTarget = destination.runTarget, runTarget.environment == .device {
             throw WorkspaceError(description: "hot reload runs apps on simulators and on this Mac for now, not on \(runTarget.name)", code: .unsupportedDestination, fix: "pass --destination simulator, or --platform macos")
         }

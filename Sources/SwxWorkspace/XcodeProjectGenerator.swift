@@ -104,6 +104,11 @@ public struct XcodeProjectGenerator: Sendable {
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: directory, projectDirectory: directory, cache: .useCache)
     }
 
+    /// The package's manifest, as project generation reads it.
+    func manifest() async throws -> Manifest {
+        try await self.loadManifest()
+    }
+
     private func loadManifest() async throws -> Manifest {
         let store = self.options.cacheDirectory.map(Store.init(root:)) ?? Store.default()
         let toolchain = try await Toolchain.detect(store: store)
@@ -223,7 +228,21 @@ public struct XcodeProjectGenerator: Sendable {
             "options": ["deploymentTarget": Self.deploymentTargets(iOS: deploymentTarget, overlay: overlay, platforms: platforms)],
             "packages": packages,
             "targets": targets,
+            "schemes": Self.schemes(for: applications.map(\.name)),
         ]
+    }
+
+    // MARK: Schemes (pure)
+
+    /// One shared scheme per app, building the app target (and so everything it embeds).
+    static func schemes(for applications: [String]) -> [String: Any] {
+        Dictionary(uniqueKeysWithValues: applications.map { application in
+            (Self.schemeName(for: application), ["build": ["targets": [application: "all"]]] as [String: Any])
+        })
+    }
+
+    static func schemeName(for application: String) -> String {
+        application
     }
 
     // MARK: Overlay targets (pure)

@@ -39,6 +39,9 @@ widgetExtension|watchApp, `sources` (SwiftPM targets), `bundleIdentifier`, `embe
 Give the internal targets an app imports `.library` products: the generated project then links them
 as local package products (system-library modules like GRDB's, resources, `Bundle.module` work);
 targets without one become static libraries. Deployment targets follow the package's `platforms:`.
+Each app gets a shared scheme named like the app that builds the app target, even when the package
+has the same name. Without `--device`, simulators matching the app's `supportedDeviceFamilies` win
+(a booted one first), so an iPhone-only app doesn't land on a booted iPad.
 
 Iterate on UI with hot reload; it needs no project changes:
 

@@ -107,7 +107,7 @@ public struct AppleBuilds: Sendable {
         output: XcodeBuildDriver.Output? = nil
     ) async throws -> BuildResult {
         // Builds don't need a concrete simulator; tests and runs do.
-        let destination = try await self.destination(for: target, requirement: action == .build ? .genericAllowed : .concreteRequired)
+        let destination = try await self.destination(for: target, requirement: action == .build ? .genericAllowed : .concreteRequired, product: product)
 
         // swx checks dependencies out where xcodebuild will look for them. A directory with an
         // Xcode project (and no Package.swift) resolves the project's package references instead.
@@ -169,7 +169,7 @@ public struct AppleBuilds: Sendable {
 
     /// Builds the app product, installs it on the simulator/device and streams its console.
     public func run(product: String, target: AppleTarget, configuration: String, arguments: [String]) async throws -> Never {
-        let destination = try await self.destination(for: target, requirement: .concreteRequired)
+        let destination = try await self.destination(for: target, requirement: .concreteRequired, product: product)
         let products = try await self.build(product: product, target: target, configuration: configuration, extraArguments: [])
 
         let app = products.appendingPathComponent(product).appendingPathExtension(Layout.appExtension)
@@ -212,13 +212,25 @@ public struct AppleBuilds: Sendable {
         let runTarget: RunTarget?
     }
 
+    /// The device families an app product declares (`supportedDeviceFamilies`), for picking a
+    /// simulator; empty when unknown (no product, not an app, or the manifest can't be read).
+    func deviceFamilies(of product: String?) async -> Set<DeviceFamily> {
+        guard let product else { return [] }
+        let generator = XcodeProjectGenerator(options: self.options, packageDirectory: self.packageDirectory)
+        guard let manifest = try? await generator.manifest(),
+              let app = manifest.products.first(where: { $0.name == product && $0.kind == .application }) else {
+            return []
+        }
+        return Set((app.application?.deviceFamilies ?? []).compactMap(DeviceFamily.init(rawValue:)))
+    }
+
     /// Whether a generic destination (no specific simulator/device) is acceptable.
     enum DestinationRequirement {
         case genericAllowed
         case concreteRequired
     }
 
-    func destination(for target: AppleTarget, requirement: DestinationRequirement) async throws -> ResolvedDestination {
+    func destination(for target: AppleTarget, requirement: DestinationRequirement, product: String? = nil) async throws -> ResolvedDestination {
         guard let platform = ApplePlatform(argument: target.platform) else {
             throw WorkspaceError(description: "unknown platform '\(target.platform)' (use \(ApplePlatform.allCases.map(\.rawValue).joined(separator: ", ")))", code: .unknownPlatform)
         }
@@ -235,7 +247,8 @@ public struct AppleBuilds: Sendable {
         do {
             switch environment {
             case .simulator:
-                runTarget = try await DeviceRunner.pickSimulator(for: platform, matching: target.device)
+                let families = target.device == nil ? await self.deviceFamilies(of: product) : []
+                runTarget = try await DeviceRunner.pickSimulator(for: platform, matching: target.device, preferring: families)
             case .device:
                 runTarget = try await DeviceRunner.pickDevice(for: platform, matching: target.device)
             }

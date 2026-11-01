@@ -77,4 +77,16 @@ report="$("$swx" build --platform ios --product Fix --format json || true)"
 grep -q '"status" *: *"succeeded"' <<<"$report" || { echo "swx build failed: $report" >&2; exit 1; }
 test ! -e Fix.xcodeproj
 
-echo "linked Store as a local package product: GRDB's system module and Bundle.module resources build, at iOS 26.0"
+# The package is named like its app, so `-scheme Fix` must be the app's own scheme: an edit to
+# the app target's sources reaches the next build (the package's auto scheme would skip it).
+printf 'let rebuildMarker = "swx-rebuild-marker-7f3a"\n' >> Sources/FixApp/App.swift
+report="$("$swx" build --platform ios --product Fix --format json || true)"
+grep -q '"status" *: *"succeeded"' <<<"$report" || { echo "swx rebuild failed: $report" >&2; exit 1; }
+app="$(find .build/swx-xcode/DerivedData/Build/Products -maxdepth 2 -name Fix.app | head -1)"
+binary="$app/Fix.debug.dylib"
+[ -f "$binary" ] || binary="$app/Fix"
+# Captured first: `strings | grep -q` would trip pipefail when grep stops reading early.
+symbols="$(strings "$binary")"
+grep -q swx-rebuild-marker-7f3a <<<"$symbols" || { echo "the app wasn't rebuilt after editing its sources" >&2; exit 1; }
+
+echo "linked Store as a local package product: GRDB's system module and Bundle.module resources build, at iOS 26.0; app edits rebuild"

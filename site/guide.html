@@ -342,6 +342,11 @@ swx run   --platform ios --destination device --team ABCDE12345 HelloApp
 swx test  --platform watchos                      <span class="c"># package tests on a watchOS simulator</span></pre>
             <p>Platforms: <code>ios</code>, <code>watchos</code>, <code>tvos</code>, <code>visionos</code>.</p>
             <p>
+                Without <code>--device</code>, swx picks a simulator of a family the app supports
+                (<code>supportedDeviceFamilies</code>): a booted one first, else the newest runtime's, so an
+                iPhone-only app doesn't land on an iPad that happens to be booted.
+            </p>
+            <p>
                 xcodebuild builds a package's <code>.iOSApplication</code> as a bare executable, so
                 <code>swx run</code> builds app products from a project it generates under
                 <code>.build/swx-xcode</code> (through XcodeGen); the package itself isn't touched.
@@ -484,7 +489,9 @@ xcodebuild -clonedSourcePackagesDirPath SourcePackages \
                 SwiftPM semantics: system-library modules (GRDB's SQLite), resources and <code>Bundle.module</code>,
                 plugins. Targets no library product vends are compiled as static libraries in the project, which lacks
                 those. The deployment target follows the package's <code>platforms:</code> (iOS, and watchOS for watch
-                apps) unless <code>--ios-deployment-target</code> says otherwise.
+                apps) unless <code>--ios-deployment-target</code> says otherwise. Each app gets a shared scheme named
+                like it that builds the app target and what it embeds, so <code>-scheme &lt;App&gt;</code> means the
+                app even when the package has the same name (Xcode would otherwise pick the package's own scheme).
             </p>
             <p>
                 What <code>Package.swift</code> can't say goes in an optional <code>swx-xcode.json</code> next to it:
