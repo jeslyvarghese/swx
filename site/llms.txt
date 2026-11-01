@@ -32,6 +32,11 @@ Package.resolved, .build, .xcodeproj), so using it changes nothing in the projec
     swx build --platform ios --format json     # same report, built with xcodebuild
     swx test --platform ios --format json      # tests on a simulator
 
+Entitlements, Info.plist keys, a widget extension or a watch app go in `swx-xcode.json` next to
+Package.swift (`applications.<App>.entitlements|infoPlist`; `targets.<Name>` with `kind`
+widgetExtension|watchApp, `sources` (SwiftPM targets), `bundleIdentifier`, `embedIn`). Builds and
+`swx xcode generate` read it; mistakes fail with code `invalid-xcode-overlay` naming the key.
+
 Iterate on UI with hot reload; it needs no project changes:
 
     swx hot start --platform ios <App> --format json   # build, launch, watch; returns when running

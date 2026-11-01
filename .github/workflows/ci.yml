@@ -70,6 +70,8 @@ jobs:
         run: Scripts/compare-xcode-registry.sh .build/release/swx
       - name: Generated Xcode projects build
         run: Scripts/check-xcode-generate.sh .build/release/swx
+      - name: Generated Xcode projects with an overlay (entitlements, widget extension, watch app) build
+        run: Scripts/check-xcode-overlay.sh .build/release/swx
       - name: Apple platforms (device builds, simulator tests)
         run: Scripts/check-apple-platforms.sh .build/release/swx ios watchos tvos
       # Hosted runners boot visionOS simulators slowly and unreliably, so it is reported, not gating.

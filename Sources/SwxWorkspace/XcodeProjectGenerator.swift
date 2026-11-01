@@ -72,7 +72,7 @@ public struct XcodeProjectGenerator: Sendable {
     /// Writes `<package>/<Name>.xcodeproj` and returns it.
     public func generate(deploymentTarget: String) async throws -> URL {
         let manifest = try await self.loadManifest()
-        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: deploymentTarget, paths: .relative)
+        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: deploymentTarget, paths: .relative, overlay: try self.loadOverlay(manifest))
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: self.packageDirectory, projectDirectory: self.packageDirectory, cache: .none)
     }
 
@@ -82,7 +82,7 @@ public struct XcodeProjectGenerator: Sendable {
     func generatePrivateProject(for product: String, in directory: URL) async throws -> URL? {
         let manifest = try await self.loadManifest()
         guard manifest.products.contains(where: { $0.name == product && $0.kind == .application }) else { return nil }
-        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: Self.defaultDeploymentTarget, paths: .absolute)
+        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: Self.defaultDeploymentTarget, paths: .absolute, overlay: try self.loadOverlay(manifest))
         try FileSystem.createDirectory(directory)
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: directory, projectDirectory: directory, cache: .useCache)
     }
@@ -92,6 +92,13 @@ public struct XcodeProjectGenerator: Sendable {
         let toolchain = try await Toolchain.detect(store: store)
         let loader = ManifestLoader(store: store, toolchain: toolchain, maximumConcurrency: self.options.maximumConcurrency)
         return try await loader.load(packageAt: self.packageDirectory)
+    }
+
+    /// `swx-xcode.json` next to the manifest, or no overlay when there is none.
+    private func loadOverlay(_ manifest: Manifest) throws -> XcodeOverlay {
+        let file = self.packageDirectory.appendingPathComponent(XcodeOverlay.fileName)
+        guard let data = FileSystem.readIfPresent(file) else { return .none }
+        return try XcodeOverlay.parse(data, manifest: manifest)
     }
 
     /// Whether XcodeGen may skip a generation whose inputs didn't change.
@@ -121,7 +128,13 @@ public struct XcodeProjectGenerator: Sendable {
 
     // MARK: Spec (pure)
 
-    static func spec(for manifest: Manifest, packageDirectory: URL, deploymentTarget: String, paths: SpecPaths = .relative) throws -> [String: Any] {
+    static func spec(
+        for manifest: Manifest,
+        packageDirectory: URL,
+        deploymentTarget: String,
+        paths: SpecPaths = .relative,
+        overlay: XcodeOverlay = .none
+    ) throws -> [String: Any] {
         let applications = manifest.products.filter { $0.kind == .application }
         guard !applications.isEmpty else {
             throw WorkspaceError(description: "\(manifest.name) declares no application products (.iOSApplication)")
@@ -129,40 +142,229 @@ public struct XcodeProjectGenerator: Sendable {
 
         var packages: [String: [String: String]] = [:]
         var targets: [String: Any] = [:]
+        var libraries = LibraryCollector()
         for application in applications {
             // The app's own targets become one application target…
             let appDependencies = try Self.dependencies(of: application.targets, in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
-            targets[application.name] = [
+            var app: [String: Any] = [
                 "type": Spec.applicationType,
                 "platform": Spec.iOS,
                 "sources": try Self.sources(application.targets, packageDirectory: packageDirectory, paths: paths),
-                "dependencies": appDependencies.entries,
+                "dependencies": appDependencies.entries.map { $0 as [String: Any] } + Self.embeddings(in: application.name, overlay: overlay),
                 "settings": ["base": Self.settings(application.application, toolsVersion: manifest.parsedToolsVersion)],
             ]
+            if let appOverlay = overlay.applications[application.name] {
+                Self.addPlists(to: &app, target: application.name, entitlements: appOverlay.entitlements, infoPlist: appOverlay.infoPlist)
+            }
+            targets[application.name] = app
 
             // …and the internal targets it imports become static libraries, keeping their module names.
-            var pending = appDependencies.internalTargets
-            while let name = pending.first {
-                pending.removeFirst()
-                guard targets[name] == nil, !application.targets.contains(name) else { continue }
-                let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
-                targets[name] = [
-                    "type": Spec.libraryType,
-                    "platform": Spec.iOS,
-                    "sources": try Self.sources([name], packageDirectory: packageDirectory, paths: paths),
-                    "dependencies": dependencies.entries,
-                    "settings": ["base": [Setting.swiftVersion: Self.swiftVersion(manifest.parsedToolsVersion)]],
-                ]
-                pending += dependencies.internalTargets
-            }
+            libraries.add(appDependencies.internalTargets, for: .iOS, excluding: application.targets)
+        }
+
+        // Overlay targets (extensions, watch apps) are built from SwiftPM targets' sources like apps.
+        for extra in overlay.targets {
+            guard let application = applications.first(where: { $0.name == extra.embedIn }) else { continue }
+
+            let dependencies = try Self.dependencies(of: extra.sources, in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
+            targets[extra.name] = try Self.extraTarget(extra, application: application, manifest: manifest, packageDirectory: packageDirectory, paths: paths, dependencies: dependencies.entries)
+            libraries.add(dependencies.internalTargets, for: extra.kind.platform, excluding: extra.sources)
+        }
+
+        // Libraries are emitted last: only now is every platform that links them known.
+        while let library = libraries.next() {
+            let (name, platforms) = library
+            let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
+            var libraryTarget: [String: Any] = [
+                "type": Spec.libraryType,
+                "sources": try Self.sources([name], packageDirectory: packageDirectory, paths: paths),
+                "dependencies": dependencies.entries,
+                "settings": ["base": [Setting.swiftVersion: Self.swiftVersion(manifest.parsedToolsVersion)]],
+            ]
+            libraryTarget.merge(Self.platformKeys(platforms)) { _, new in new }
+            targets[name] = libraryTarget
+            libraries.add(dependencies.internalTargets, for: platforms)
         }
 
         return [
             "name": manifest.name,
-            "options": ["deploymentTarget": [Spec.iOS: deploymentTarget]],
+            "options": ["deploymentTarget": Self.deploymentTargets(iOS: deploymentTarget, overlay: overlay)],
             "packages": packages,
             "targets": targets,
         ]
+    }
+
+    // MARK: Overlay targets (pure)
+
+    /// The platforms an XcodeGen target is built for.
+    enum TargetPlatform: String, Sendable, Comparable {
+        case iOS
+        case watchOS
+
+        static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    private enum Overlay {
+        static let supportDirectory = "XcodeSupport"
+        static let entitlementsExtension = "entitlements"
+        static let infoPlistSuffix = "-Info.plist"
+        static let appExtensionType = "app-extension"
+        static let multiplatform = "auto"
+        static let supportedDestinations = "supportedDestinations"
+        static let watchContentsSubpath = "$(CONTENTS_FOLDER_PATH)/Watch"
+        static let productsDirectory = "productsDirectory"
+        static let extensionKey = "NSExtension"
+        static let extensionPointKey = "NSExtensionPointIdentifier"
+        static let widgetExtensionPoint = "com.apple.widgetkit-extension"
+        static let watchApplicationKey = "WKApplication"
+        static let companionSetting = "INFOPLIST_KEY_WKCompanionAppBundleIdentifier"
+        static let displayNameSetting = "INFOPLIST_KEY_CFBundleDisplayName"
+        /// watchOS apps embedded in iOS 17 apps.
+        static let defaultWatchDeploymentTarget = "10.0"
+        static let versionSeparator: Character = "."
+    }
+
+    /// The app's dependencies on the overlay targets it embeds: extensions go to PlugIns
+    /// (XcodeGen's default), a watch app to `Watch/`.
+    private static func embeddings(in application: String, overlay: XcodeOverlay) -> [[String: Any]] {
+        overlay.targets.filter { $0.embedIn == application }.map { extra in
+            switch extra.kind {
+            case .widgetExtension:
+                return ["target": extra.name, "embed": true]
+            case .watchApp:
+                return [
+                    "target": extra.name,
+                    "embed": true,
+                    "copy": ["destination": Overlay.productsDirectory, "subpath": Overlay.watchContentsSubpath],
+                ]
+            }
+        }
+    }
+
+    private static func extraTarget(
+        _ extra: XcodeOverlay.ExtraTarget,
+        application: Manifest.Product,
+        manifest: Manifest,
+        packageDirectory: URL,
+        paths: SpecPaths,
+        dependencies: [[String: String]]
+    ) throws -> [String: Any] {
+        // Versions and team follow the app: embedded bundles must match it.
+        var settings = [
+            Setting.bundleIdentifier: extra.bundleIdentifier,
+            Setting.generateInfoPlist: Setting.yes,
+            Setting.swiftVersion: Self.swiftVersion(manifest.parsedToolsVersion),
+            Overlay.displayNameSetting: extra.name,
+        ]
+        settings[Setting.marketingVersion] = application.application?.displayVersion
+        settings[Setting.buildVersion] = application.application?.bundleVersion
+        if let team = application.application?.teamIdentifier, !team.isEmpty {
+            settings[Setting.team] = team
+        }
+
+        // What each kind needs in its Info.plist and settings to be recognised as one.
+        var infoPlist = extra.infoPlist
+        let type: String
+        switch extra.kind {
+        case .widgetExtension:
+            type = Overlay.appExtensionType
+            infoPlist[Overlay.extensionKey] = infoPlist[Overlay.extensionKey]
+                ?? .dictionary([Overlay.extensionPointKey: .string(Overlay.widgetExtensionPoint)])
+        case .watchApp:
+            type = Spec.applicationType
+            settings[Overlay.companionSetting] = application.application?.bundleIdentifier
+            infoPlist[Overlay.watchApplicationKey] = infoPlist[Overlay.watchApplicationKey] ?? .bool(true)
+        }
+
+        var target: [String: Any] = [
+            "type": type,
+            "platform": extra.kind.platform.rawValue,
+            "sources": try Self.sources(extra.sources, packageDirectory: packageDirectory, paths: paths),
+            "dependencies": dependencies,
+            "settings": ["base": settings],
+        ]
+        if let deploymentTarget = extra.deploymentTarget {
+            target["deploymentTarget"] = deploymentTarget
+        }
+        Self.addPlists(to: &target, target: extra.name, entitlements: extra.entitlements, infoPlist: infoPlist)
+        return target
+    }
+
+    /// Entitlements and Info.plist entries, written by XcodeGen next to the project (it also points
+    /// `CODE_SIGN_ENTITLEMENTS` / `INFOPLIST_FILE` at them; generated keys are merged by Xcode).
+    private static func addPlists(to target: inout [String: Any], target name: String, entitlements: [String: XcodeOverlay.PlistValue], infoPlist: [String: XcodeOverlay.PlistValue]) {
+        if !entitlements.isEmpty {
+            target["entitlements"] = [
+                "path": "\(Overlay.supportDirectory)/\(name).\(Overlay.entitlementsExtension)",
+                "properties": entitlements.mapValues(\.json),
+            ]
+        }
+        if !infoPlist.isEmpty {
+            target["info"] = [
+                "path": "\(Overlay.supportDirectory)/\(name)\(Overlay.infoPlistSuffix)",
+                "properties": infoPlist.mapValues(\.json),
+            ]
+        }
+    }
+
+    /// A library linked from one platform keeps `platform: iOS` as before; one shared by the iOS
+    /// app and the watch app is a single multiplatform target, so its module name stays the same.
+    private static func platformKeys(_ platforms: Set<TargetPlatform>) -> [String: Any] {
+        guard platforms.count > 1 else {
+            return ["platform": (platforms.first ?? .iOS).rawValue]
+        }
+        return ["platform": Overlay.multiplatform, Overlay.supportedDestinations: platforms.sorted().map(\.rawValue)]
+    }
+
+    /// The project's deployment targets: iOS as asked, watchOS as low as any watch app needs.
+    private static func deploymentTargets(iOS: String, overlay: XcodeOverlay) -> [String: String] {
+        var targets = [Spec.iOS: iOS]
+        let watchApps = overlay.targets.filter { $0.kind == .watchApp }
+        guard !watchApps.isEmpty else { return targets }
+
+        let watchVersions = watchApps.map { $0.deploymentTarget ?? Overlay.defaultWatchDeploymentTarget }
+        targets[TargetPlatform.watchOS.rawValue] = watchVersions.min { Self.versionComponents($0).lexicographicallyPrecedes(Self.versionComponents($1)) }
+        return targets
+    }
+
+    private static func versionComponents(_ version: String) -> [Int] {
+        version.split(separator: Overlay.versionSeparator).compactMap { Int($0) }
+    }
+
+    /// Internal targets to emit as libraries, with every platform that links them, in discovery order.
+    struct LibraryCollector {
+        private var order: [String] = []
+        private var platforms: [String: Set<TargetPlatform>] = [:]
+        private var emitted: [String: Set<TargetPlatform>] = [:]
+        private var excluded: Set<String> = []
+
+        /// Records `names` as linked from `platform`; targets in `excluding` are an app's or
+        /// extension's own sources, never libraries.
+        mutating func add(_ names: [String], for platform: TargetPlatform, excluding own: [String] = []) {
+            self.add(names, for: [platform], excluding: own)
+        }
+
+        mutating func add(_ names: [String], for platforms: Set<TargetPlatform>, excluding own: [String] = []) {
+            self.excluded.formUnion(own)
+            for name in names where !self.excluded.contains(name) {
+                if self.platforms[name] == nil {
+                    self.order.append(name)
+                }
+                self.platforms[name, default: []].formUnion(platforms)
+            }
+        }
+
+        /// The next library whose platforms changed since it was last emitted (each library is
+        /// re-emitted, with its dependencies, when another platform turns out to need it).
+        mutating func next() -> (String, Set<TargetPlatform>)? {
+            for name in self.order {
+                let platforms = self.platforms[name] ?? []
+                guard self.emitted[name] != platforms, !self.excluded.contains(name) else { continue }
+                self.emitted[name] = platforms
+                return (name, platforms)
+            }
+            return nil
+        }
     }
 
     /// Sources must live in the default `Sources/<target>` layout.

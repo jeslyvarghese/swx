@@ -22,6 +22,7 @@ public enum ErrorCode: String, Sendable, Codable {
     case device = "device"
     case hotReload = "hot-reload"
     case subprocess = "subprocess"
+    case invalidXcodeOverlay = "invalid-xcode-overlay"
     case usage = "usage"
     case failed = "failed"
 }

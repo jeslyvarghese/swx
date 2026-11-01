@@ -74,7 +74,8 @@ struct XcodeUpdate: AsyncParsableCommand {
 struct XcodeGenerate: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "generate",
-        abstract: "Generate an .xcodeproj for the package's .iOSApplication products (via XcodeGen)."
+        abstract: "Generate an .xcodeproj for the package's .iOSApplication products (via XcodeGen).",
+        discussion: "Entitlements, Info.plist keys, widget extensions and a watch app are read from swx-xcode.json next to Package.swift when present."
     )
 
     @Option(name: .customLong("ios-deployment-target"), help: "The iOS deployment target of the generated targets.")

@@ -478,6 +478,32 @@ swx hot stop</pre>
 xcodebuild -clonedSourcePackagesDirPath SourcePackages \
            -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile …</pre>
             <p>When an app outgrows a package, <code>swx xcode generate</code> writes an <code>.xcodeproj</code> for its <code>.iOSApplication</code> products (through XcodeGen, fetched like any swx tool).</p>
+            <p>
+                What <code>Package.swift</code> can't say goes in an optional <code>swx-xcode.json</code> next to it:
+                entitlements, extra Info.plist keys, a WidgetKit extension (widgets, Live Activities) and a watchOS
+                companion app, each built from SwiftPM targets of the package. <code>swx xcode generate</code> and
+                <code>swx build|run|hot --platform ios</code> both read it.
+            </p>
+<pre>{
+  "applications": {
+    "Lift": {
+      "entitlements": { "com.apple.developer.healthkit": true, "com.apple.security.application-groups": ["group.app.lift"] },
+      "infoPlist": { "NSSupportsLiveActivities": true, "NSHealthShareUsageDescription": "Reads your HRV." }
+    }
+  },
+  "targets": {
+    "LiftWidget": { "kind": "widgetExtension", "sources": ["LiftWidgetUI"], "bundleIdentifier": "app.lift.ios.LiftWidget", "embedIn": "Lift" },
+    "LiftWatch":  { "kind": "watchApp", "sources": ["LiftWatchUI"], "bundleIdentifier": "app.lift.ios.watchkitapp", "embedIn": "Lift", "deploymentTarget": "11.0" }
+  }
+}</pre>
+            <p>
+                Each target's <code>sources</code> are SwiftPM targets (guard their code with <code>#if os(…)</code>
+                so <code>swift build</code> still works); the libraries they import build for every platform that
+                links them. Extensions are embedded in <code>PlugIns</code>, the watch app in <code>Watch</code>,
+                with the app's versions and team. Bundle identifiers must be unique and start with the app's.
+                Entitlements and Info.plist files are written to <code>XcodeSupport/</code> next to the project.
+                Unknown keys, kinds, targets or apps are errors (<code>invalid-xcode-overlay</code>) naming the key.
+            </p>
         </section>
 
         <section id="toolchains">
