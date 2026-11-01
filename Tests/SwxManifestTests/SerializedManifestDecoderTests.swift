@@ -109,6 +109,7 @@ struct ApplicationSettingsParityTests {
         #expect(application.teamIdentifier == "TEAM42")
         #expect(application.deviceFamilies == ["pad", "phone"])
         #expect(application.interfaceOrientations == ["portrait", "landscapeRight", "portraitUpsideDown"])
+        #expect(application.accentColor == .preset("blue"))
 
         // Compare with real evaluation where Xcode is installed.
         guard await ManifestCompiler.directory(of: .xcode) != nil else { return }

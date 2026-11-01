@@ -215,6 +215,14 @@ public struct Manifest: Sendable, Codable, Hashable {
             public var deviceFamilies: [String]
             /// `portrait`, `landscapeLeft`, …, in declaration order (conditions dropped).
             public var interfaceOrientations: [String]
+            /// The app's tint: a preset system color or an asset in the app's own catalog.
+            public var accentColor: AccentColor?
+
+            /// `accentColor: .presetColor(.orange)` or `.asset("Name")` (and `accentColorAssetName:`).
+            public enum AccentColor: Sendable, Codable, Hashable {
+                case preset(String)
+                case asset(String)
+            }
 
             public init(
                 bundleIdentifier: String?,
@@ -222,8 +230,10 @@ public struct Manifest: Sendable, Codable, Hashable {
                 displayVersion: String?,
                 bundleVersion: String?,
                 deviceFamilies: [String],
-                interfaceOrientations: [String]
+                interfaceOrientations: [String],
+                accentColor: AccentColor? = nil
             ) {
+                self.accentColor = accentColor
                 self.bundleIdentifier = bundleIdentifier
                 self.teamIdentifier = teamIdentifier
                 self.displayVersion = displayVersion

@@ -32,7 +32,9 @@ extension HotEvent: CustomStringConvertible {
         case .launched(_, let name, _):
             return "launched" + (name.map { " on \($0)" } ?? "")
         case .agentMissing:
-            return "the app didn't load the hot reload agent (hardened runtime?); it runs without hot reload"
+            return "the app didn't connect to the hot reload agent, so it runs without hot reload; "
+                + "`swx hot logs` shows whether the agent loaded (\"hot reload agent could not reach swx\") or the app "
+                + "crashed at launch; a hardened runtime also blocks it. `swx hot stop` and `swx hot start` again to retry"
         case .watching(let files):
             let sources = files.filter { $0.pathExtension == Self.swiftExtension && $0.lastPathComponent != WellKnownFile.manifest }
             return "hot reload: watching \(sources.count) Swift files; saving one reloads it in the app"

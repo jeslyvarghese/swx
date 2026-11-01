@@ -52,7 +52,10 @@ extension AppleBuilds {
             }
             try Task.checkCancellation()
 
-            let modules = build.swiftModules.filter { $0.architecture == Self.hostArchitecture }
+            // Only modules built for this destination: a scheme that also builds a watch app
+            // compiles shared libraries for the watch too, with the same architecture.
+            let sdkName = destination.destination.sdkName
+            let modules = build.swiftModules.filter { $0.architecture == Self.hostArchitecture && $0.usesSDK(named: sdkName) }
             guard let appModule = modules.first(where: { $0.module == product }) ?? modules.first,
                   let triple = appModule.target, let sdk = appModule.sdk else {
                 throw WorkspaceError(description: "the build of \(product) logged no Swift compile commands for \(Self.hostArchitecture)", code: .hotReload)

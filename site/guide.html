@@ -492,6 +492,8 @@ xcodebuild -clonedSourcePackagesDirPath SourcePackages \
                 apps) unless <code>--ios-deployment-target</code> says otherwise. Each app gets a shared scheme named
                 like it that builds the app target and what it embeds, so <code>-scheme &lt;App&gt;</code> means the
                 app even when the package has the same name (Xcode would otherwise pick the package's own scheme).
+                An <code>accentColor: .presetColor(…)</code> becomes a generated <code>AccentColor</code> color set
+                (in <code>XcodeSupport/&lt;App&gt;.xcassets</code>), and <code>.asset("Name")</code> names the app's own.
             </p>
             <p>
                 What <code>Package.swift</code> can't say goes in an optional <code>swx-xcode.json</code> next to it:

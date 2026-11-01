@@ -37,6 +37,13 @@ public struct SwiftModuleCommand: Sendable, Codable, Hashable {
         self.value(of: Flag.sdk)
     }
 
+    /// Whether this module was compiled with the SDK named `sdkName` (`iphonesimulator`): its
+    /// `-sdk` directory is `<SDK><version>.sdk`, matched without case.
+    public func usesSDK(named sdkName: String) -> Bool {
+        guard let sdk = self.sdk else { return false }
+        return URL(fileURLWithPath: sdk).lastPathComponent.lowercased().hasPrefix(sdkName.lowercased())
+    }
+
     /// The module's Swift files, resolved (`/tmp` → `/private/tmp`): listed directly or in a
     /// file list (`@…SwiftFileList`, one path per line, as Xcode passes them).
     public func sourceFiles() -> [URL] {
@@ -133,10 +140,11 @@ struct SwiftModuleCommandStore {
     func merge(_ commands: [SwiftModuleCommand]) -> [SwiftModuleCommand] {
         let remembered = FileSystem.readIfPresent(self.file).flatMap { try? JSONDecoder().decode([SwiftModuleCommand].self, from: $0) } ?? []
 
-        // A module is one module name per architecture.
+        // A module is one module name per architecture and target: a package library built for
+        // both the iOS and watchOS simulators (both arm64) is two modules.
         var byModule: [String: SwiftModuleCommand] = [:]
         for command in remembered + commands {
-            byModule[command.module + " " + command.architecture] = command
+            byModule[[command.module, command.architecture, command.target ?? ""].joined(separator: " ")] = command
         }
         let merged = byModule.keys.sorted().compactMap { byModule[$0] }
         if let data = try? JSONEncoder().encode(merged) {

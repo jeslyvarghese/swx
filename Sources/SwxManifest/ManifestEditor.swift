@@ -43,11 +43,21 @@ public enum ManifestEditor {
         static let package = "package"
         static let from = "from"
         static let exact = "exact"
+        static let name = "name"
+        static let dependencies = "dependencies"
+    }
+
+    private enum Punctuation {
+        static let separator = ", "
+        static let comma = ","
+        static let newline = "\n"
     }
 
     private enum Member {
         static let package = "package"
         static let product = "product"
+        /// The target kinds that take `dependencies:`.
+        static let targetKinds: Set<String> = ["target", "executableTarget", "testTarget", "macro", "plugin"]
         static let upToNextMajor = "upToNextMajor"
         static let upToNextMinor = "upToNextMinor"
         static let exact = "exact"
@@ -94,6 +104,89 @@ public enum ManifestEditor {
         let end = literal.segments.endPositionBeforeTrailingTrivia.utf8Offset
         bytes.replaceSubrange(start..<end, with: Array(version.utf8))
         return try Self.checked(String(decoding: bytes, as: UTF8.self))
+    }
+
+    /// Adds `.product(name: product, package: package)` to a target's `dependencies:`, in the
+    /// list's own style: `, ` between elements on one line, a new indented line in a multi-line
+    /// list, and a `dependencies:` argument after `name:` when the target has none. `nil` when
+    /// the target isn't a literal `.target(name: "…")` call (SwiftPM's editor handles those).
+    public static func addingTargetDependency(product: String, package: String, to target: String, in source: String) throws -> String? {
+        let finder = TargetFinder(viewMode: .sourceAccurate, kinds: Member.targetKinds, name: target)
+        finder.walk(Parser.parse(source: source))
+        guard let call = finder.call else { return nil }
+
+        let element = ".\(Member.product)(\(Label.name): \"\(product)\", \(Label.package): \"\(package)\")"
+        guard let (offset, text) = Self.insertion(of: element, into: call) else { return nil }
+
+        var bytes = Array(source.utf8)
+        bytes.insert(contentsOf: Array(text.utf8), at: offset)
+        return try Self.checked(String(decoding: bytes, as: UTF8.self))
+    }
+
+    /// Where and what to insert for `element` in a target call.
+    private static func insertion(of element: String, into call: FunctionCallExprSyntax) -> (Int, String)? {
+        // An existing `dependencies: [...]`.
+        if let argument = call.arguments.first(where: { $0.label?.text == Label.dependencies }) {
+            guard let array = argument.expression.as(ArrayExprSyntax.self) else { return nil }
+            return Self.insertion(of: element, into: array)
+        }
+
+        // No dependencies yet: a new argument right after `name:`, laid out like the call.
+        guard let name = call.arguments.first(where: { $0.label?.text == Label.name }) else { return nil }
+        let argument = "\(Label.dependencies): [\(element)]"
+        guard Self.isOnItsOwnLine(Syntax(name)) else {
+            if let comma = name.trailingComma {
+                return (comma.endPositionBeforeTrailingTrivia.utf8Offset, " " + argument + Punctuation.comma)
+            }
+            return (name.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.separator + argument)
+        }
+
+        let indent = Self.indentation(of: Syntax(name))
+        if let comma = name.trailingComma {
+            return (comma.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.newline + indent + argument + Punctuation.comma)
+        }
+        return (name.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.comma + Punctuation.newline + indent + argument)
+    }
+
+    private static func insertion(of element: String, into array: ArrayExprSyntax) -> (Int, String)? {
+        // `[]`: the element goes between the brackets.
+        guard let last = array.elements.last else {
+            return (array.leftSquare.endPositionBeforeTrailingTrivia.utf8Offset, element)
+        }
+
+        // One line: `, element` after the last element (a trailing comma, if any, follows it).
+        guard Self.isOnItsOwnLine(Syntax(last)) else {
+            return (last.expression.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.separator + element)
+        }
+
+        // Multi-line: a new line, indented like the last element, keeping its comma style.
+        let indent = Self.indentation(of: Syntax(last))
+        if let comma = last.trailingComma {
+            return (comma.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.newline + indent + element + Punctuation.comma)
+        }
+        return (last.expression.endPositionBeforeTrailingTrivia.utf8Offset, Punctuation.comma + Punctuation.newline + indent + element)
+    }
+
+    private static func isOnItsOwnLine(_ node: Syntax) -> Bool {
+        node.leadingTrivia.contains { $0.isNewline }
+    }
+
+    /// The spaces and tabs after the last newline in a node's leading trivia.
+    private static func indentation(of node: Syntax) -> String {
+        var indent = ""
+        for piece in node.leadingTrivia {
+            switch piece {
+            case .spaces(let count):
+                indent += String(repeating: " ", count: count)
+            case .tabs(let count):
+                indent += String(repeating: "\t", count: count)
+            case .newlines, .carriageReturns, .carriageReturnLineFeeds:
+                indent = ""
+            default:
+                continue
+            }
+        }
+        return indent
     }
 
     /// An edit must leave valid Swift; otherwise the file is left alone.
@@ -238,6 +331,35 @@ private final class ElementCollector: SyntaxVisitor {
         guard let call = node.expression.as(FunctionCallExprSyntax.self), self.matches(call) else { return .visitChildren }
         self.elements.append((node, call))
         // A matched element is removed whole; nothing inside it needs looking at.
+        return .skipChildren
+    }
+}
+
+/// The first `.target(name: "<name>", …)`-style call of one of the given kinds.
+private final class TargetFinder: SyntaxVisitor {
+    static let nameLabel = "name"
+
+    let kinds: Set<String>
+    let name: String
+    var call: FunctionCallExprSyntax?
+
+    init(viewMode: SyntaxTreeViewMode, kinds: Set<String>, name: String) {
+        self.kinds = kinds
+        self.name = name
+        super.init(viewMode: viewMode)
+    }
+
+    override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
+        guard self.call == nil else { return .skipChildren }
+        guard let member = node.calledExpression.as(MemberAccessExprSyntax.self)?.declName.baseName.text, self.kinds.contains(member) else {
+            return .visitChildren
+        }
+
+        let literal = node.arguments.first { $0.label?.text == Self.nameLabel }?.expression.as(StringLiteralExprSyntax.self)
+        let value = literal?.segments.compactMap { $0.as(StringSegmentSyntax.self)?.content.text }.joined()
+        if value == self.name {
+            self.call = node
+        }
         return .skipChildren
     }
 }

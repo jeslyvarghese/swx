@@ -100,9 +100,21 @@ extension Workspace {
         if declared == nil {
             try await ProcessRunner.run([PackageCommand.swift, PackageCommand.package] + packagePath + [PackageCommand.addDependency, url] + arguments)
         }
-        try await ProcessRunner.run([PackageCommand.swift, PackageCommand.package] + packagePath
-            + [PackageCommand.addTargetDependency, product, target, PackageCommand.packageOption, declared?.referenceName ?? identity])
+        try await Self.addTargetDependency(product: product, package: declared?.referenceName ?? identity, to: target, in: directory, packagePath: packagePath)
         return AddResult(url: url, identity: identity, requirement: declared == nil ? requirement : nil, product: product, target: target, alreadyPresent: false)
+    }
+
+    /// The target's new dependency, written in the list's own style by swx's editor; SwiftPM's
+    /// `add-target-dependency` when the target isn't a literal call swx can edit.
+    private static func addTargetDependency(product: String, package: String, to target: String, in directory: URL, packagePath: [String]) async throws {
+        let manifest = directory.appendingPathComponent(WellKnownFile.manifest)
+        let source = String(decoding: try Data(contentsOf: manifest), as: UTF8.self)
+        if let edited = try ManifestEditor.addingTargetDependency(product: product, package: package, to: target, in: source) {
+            try FileSystem.writeAtomically(Data(edited.utf8), to: manifest)
+            return
+        }
+        try await ProcessRunner.run([PackageCommand.swift, PackageCommand.package] + packagePath
+            + [PackageCommand.addTargetDependency, product, target, PackageCommand.packageOption, package])
     }
 
     // MARK: Package

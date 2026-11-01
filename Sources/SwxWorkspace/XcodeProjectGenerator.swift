@@ -40,6 +40,9 @@ public struct XcodeProjectGenerator: Sendable {
         static let orientations = "INFOPLIST_KEY_UISupportedInterfaceOrientations"
         static let padOrientations = "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad"
         static let swiftVersion = "SWIFT_VERSION"
+        static let accentColorName = "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME"
+        static let appIconName = "ASSETCATALOG_COMPILER_APPICON_NAME"
+        static let none = ""
         static let yes = "YES"
     }
 
@@ -82,6 +85,7 @@ public struct XcodeProjectGenerator: Sendable {
             overlay: try self.loadOverlay(manifest),
             platforms: minimums
         )
+        try Self.writeSupportFiles(for: manifest, in: self.packageDirectory)
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: self.packageDirectory, projectDirectory: self.packageDirectory, cache: .none)
     }
 
@@ -101,6 +105,7 @@ public struct XcodeProjectGenerator: Sendable {
             platforms: minimums
         )
         try FileSystem.createDirectory(directory)
+        try Self.writeSupportFiles(for: manifest, in: directory)
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: directory, projectDirectory: directory, cache: .useCache)
     }
 
@@ -185,9 +190,10 @@ public struct XcodeProjectGenerator: Sendable {
             var app: [String: Any] = [
                 "type": Spec.applicationType,
                 "platform": Spec.iOS,
-                "sources": try Self.sources(application.targets, packageDirectory: packageDirectory, paths: paths),
+                "sources": try Self.sources(application.targets, packageDirectory: packageDirectory, paths: paths) + Self.accentCatalogSources(for: application),
                 "dependencies": appDependencies.entries.map { $0 as [String: Any] } + Self.embeddings(in: application.name, overlay: overlay),
-                "settings": ["base": Self.settings(application.application, toolsVersion: manifest.parsedToolsVersion)],
+                "settings": ["base": Self.settings(application.application, toolsVersion: manifest.parsedToolsVersion)
+                    .merging(Self.iconSettings(for: application, packageDirectory: packageDirectory)) { _, new in new }],
             ]
             if let appOverlay = overlay.applications[application.name] {
                 Self.addPlists(to: &app, target: application.name, entitlements: appOverlay.entitlements, infoPlist: appOverlay.infoPlist)
@@ -595,6 +601,86 @@ public struct XcodeProjectGenerator: Sendable {
             settings[Setting.orientations] = orientations.joined(separator: " ")
             settings[Setting.padOrientations] = orientations.joined(separator: " ")
         }
+
+        // The tint: our generated `AccentColor` for a preset, the app's own asset otherwise.
+        switch application.accentColor {
+        case .preset:
+            settings[Setting.accentColorName] = AccentCatalog.colorName
+        case .asset(let name):
+            settings[Setting.accentColorName] = name
+        case nil:
+            break
+        }
         return settings
+    }
+
+    // MARK: Accent color (pure)
+
+    /// A generated asset catalog holding the preset accent color as a system color reference.
+    enum AccentCatalog {
+        static let colorName = "AccentColor"
+        static let catalogExtension = "xcassets"
+        static let colorSetExtension = "colorset"
+        static let contents = "Contents.json"
+        static let systemColorPrefix = "system"
+        static let systemColorSuffix = "Color"
+        static let platform = "ios"
+        static let idiom = "universal"
+        static let author = "xcode"
+        static let version = 1
+    }
+
+    /// `XcodeSupport/<App>.xcassets`, relative to the spec (where support files are written).
+    static func accentCatalogPath(for application: String) -> String {
+        "\(Overlay.supportDirectory)/\(application).\(AccentCatalog.catalogExtension)"
+    }
+
+    /// With only our generated catalog, there's no `AppIcon` for Xcode's default icon name to
+    /// find; an app that brings its own catalog keeps the default.
+    private static func iconSettings(for application: Manifest.Product, packageDirectory: URL) -> [String: String] {
+        guard case .preset = application.application?.accentColor else { return [:] }
+
+        let sourcesDirectory = packageDirectory.appendingPathComponent(Spec.sourcesDirectory)
+        let hasOwnCatalog = application.targets.contains { target in
+            let directory = sourcesDirectory.appendingPathComponent(target)
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            return contents.contains { $0.hasSuffix("." + AccentCatalog.catalogExtension) }
+        }
+        return hasOwnCatalog ? [:] : [Setting.appIconName: Setting.none]
+    }
+
+    private static func accentCatalogSources(for application: Manifest.Product) -> [[String: String]] {
+        guard case .preset = application.application?.accentColor else { return [] }
+        return [["path": Self.accentCatalogPath(for: application.name)]]
+    }
+
+    /// Files to write next to the spec, by relative path: each preset accent color's catalog.
+    static func supportFiles(for manifest: Manifest) throws -> [String: Data] {
+        var files: [String: Data] = [:]
+        let info: [String: Any] = ["info": ["author": AccentCatalog.author, "version": AccentCatalog.version]]
+
+        for application in manifest.products where application.kind == .application {
+            guard case .preset(let preset) = application.application?.accentColor else { continue }
+
+            // `orange` → `systemOrangeColor`, as Xcode names system colors in a color set.
+            let reference = AccentCatalog.systemColorPrefix + preset.prefix(1).uppercased() + preset.dropFirst() + AccentCatalog.systemColorSuffix
+            let colorSet: [String: Any] = info.merging([
+                "colors": [["idiom": AccentCatalog.idiom, "color": ["platform": AccentCatalog.platform, "reference": reference]]],
+            ]) { _, new in new }
+
+            let catalog = Self.accentCatalogPath(for: application.name)
+            let colorSetPath = "\(catalog)/\(AccentCatalog.colorName).\(AccentCatalog.colorSetExtension)"
+            files["\(catalog)/\(AccentCatalog.contents)"] = try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys])
+            files["\(colorSetPath)/\(AccentCatalog.contents)"] = try JSONSerialization.data(withJSONObject: colorSet, options: [.prettyPrinted, .sortedKeys])
+        }
+        return files
+    }
+
+    private static func writeSupportFiles(for manifest: Manifest, in directory: URL) throws {
+        for (path, data) in try Self.supportFiles(for: manifest) {
+            let file = directory.appendingPathComponent(path)
+            try FileSystem.createDirectory(file.deletingLastPathComponent())
+            try FileSystem.writeAtomically(data, to: file)
+        }
     }
 }

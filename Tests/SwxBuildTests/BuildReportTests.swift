@@ -97,4 +97,36 @@ struct TestLogTests {
         #expect(report.failures[0].issues == [TestIssue(file: "/w/X.swift", line: 5, message: "XCTAssertEqual failed")])
         #expect(report.failures[1].issues == [TestIssue(file: nil, line: nil, message: "Expectation failed")])
     }
+
+    /// Three bundles' runs, the same test name in two of them, and one dropped per-test line.
+    private static let multipleRuns = """
+    ◇ Test run started.
+    ✔ Test shared() passed after 0.001 seconds.
+    ✔ Test first() passed after 0.001 seconds.
+    ✔ Test run with 2 tests in 1 suite passed after 0.001 seconds.
+    ◇ Test run started.
+    ✔ Test shared() passed after 0.001 seconds.
+    ✔ Test second() passed after 0.001 seconds.
+    ✔ Test run with 3 tests in 1 suite passed after 0.001 seconds.
+    ◇ Test run started.
+    ✔ Test third() passed after 0.001 seconds.
+    ✔ Test run with 1 test in 1 suite passed after 0.001 seconds.
+    """
+
+    @Test func countsEveryRunAndSameNamedTestsInEach() {
+        let report = TestLog.report(in: Self.multipleRuns)
+        #expect(report.passed == 6)
+        #expect(report.failed == 0)
+    }
+
+    @Test func failingRunSummariesDontInventPasses() {
+        let log = """
+        ◇ Test run started.
+        ✘ Test fails() failed after 0.001 seconds with 1 issue.
+        ✘ Test run with 4 tests in 1 suite failed after 0.001 seconds with 1 issue.
+        """
+        let report = TestLog.report(in: log)
+        #expect(report.passed == 0)
+        #expect(report.failed == 1)
+    }
 }

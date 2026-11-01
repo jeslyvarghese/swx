@@ -59,6 +59,8 @@ public enum TestLog {
         static let test = "Test "
         /// The run's own summary line: `Test run with 4 tests …`.
         static let runSummary = "Test run with "
+        static let runStarted = "Test run started."
+        static let runTestsUnit = " test"
         static let passed = " passed after "
         static let failed = " failed after "
         static let skipped = " skipped"
@@ -75,17 +77,32 @@ public enum TestLog {
         case skipped
     }
 
-    public static func report(in log: String) -> TestReport {
-        var outcomes: [String: Outcome] = [:]
-        var order: [String] = []
-        var issues: [String: [TestIssue]] = [:]
-        var lastIssue: (test: String, index: Int)?
+    /// A test within one run: Swift Testing names tests without their suite or bundle, so the
+    /// same name in two bundles is two tests. XCTest names are qualified and use run 0.
+    private struct Key: Hashable {
+        let run: Int
+        let name: String
+    }
 
-        func record(_ test: String, _ outcome: Outcome) {
+    public static func report(in log: String) -> TestReport {
+        var outcomes: [Key: Outcome] = [:]
+        var order: [Key] = []
+        var issues: [Key: [TestIssue]] = [:]
+        var lastIssue: (test: Key, index: Int)?
+
+        // Swift Testing runs (one per test bundle): which tests each reported, so a run whose
+        // summary counts more passing tests than lines arrived (SwiftPM can drop a line when its
+        // output goes through a pipe) still counts them all.
+        var run = 0
+        var seenInRun: Set<String> = []
+        var unattributedPassed = 0
+
+        func record(_ test: Key, _ outcome: Outcome) {
             if outcomes[test] == nil {
                 order.append(test)
             }
             outcomes[test] = outcome
+            seenInRun.insert(test.name)
         }
 
         for rawLine in log.split(whereSeparator: \.isNewline) {
@@ -93,14 +110,14 @@ public enum TestLog {
 
             // XCTest: `Test Case '…' passed|failed|skipped (…)`.
             if line.hasPrefix(XCTest.testCase), let (name, outcome) = Self.xcTestCase(line) {
-                record(name, outcome)
+                record(Key(run: 0, name: name), outcome)
                 lastIssue = nil
                 continue
             }
 
             // XCTest: `/path/File.swift:12: error: -[Module.Class test] : message`.
             if let (name, issue) = Self.xcTestFailure(line) {
-                issues[name, default: []].append(issue)
+                issues[Key(run: 0, name: name), default: []].append(issue)
                 lastIssue = nil
                 continue
             }
@@ -115,23 +132,36 @@ public enum TestLog {
                 continue
             }
             lastIssue = nil
-            guard symbolless.hasPrefix(SwiftTesting.test), !symbolless.hasPrefix(SwiftTesting.runSummary) else { continue }
+
+            // A run's start and summary bracket its tests.
+            if symbolless.hasPrefix(SwiftTesting.runStarted) {
+                run += 1
+                seenInRun = []
+                continue
+            }
+            if symbolless.hasPrefix(SwiftTesting.runSummary) {
+                unattributedPassed += Self.missingPasses(summary: symbolless, seen: seenInRun.count)
+                seenInRun = []
+                continue
+            }
+            guard symbolless.hasPrefix(SwiftTesting.test) else { continue }
             let rest = String(symbolless.dropFirst(SwiftTesting.test.count))
 
             if let (name, issue) = Self.swiftTestingIssue(rest) {
-                issues[name, default: []].append(issue)
-                lastIssue = (name, issues[name]!.count - 1)
+                let key = Key(run: run, name: name)
+                issues[key, default: []].append(issue)
+                lastIssue = (key, issues[key]!.count - 1)
                 continue
             }
             for (marker, outcome) in [(SwiftTesting.passed, Outcome.passed), (SwiftTesting.failed, .failed), (SwiftTesting.skipped, .skipped)] {
                 guard let range = rest.range(of: marker) else { continue }
-                record(String(rest[..<range.lowerBound]), outcome)
+                record(Key(run: run, name: String(rest[..<range.lowerBound])), outcome)
                 break
             }
         }
 
         // Count each test once, by its last outcome; failures keep the run's order.
-        var report = TestReport()
+        var report = TestReport(passed: unattributedPassed)
         for test in order {
             switch outcomes[test]! {
             case .passed:
@@ -140,7 +170,7 @@ public enum TestLog {
                 report.skipped += 1
             case .failed:
                 report.failed += 1
-                report.failures.append(TestFailure(test: test, issues: issues[test] ?? []))
+                report.failures.append(TestFailure(test: test.name, issues: issues[test] ?? []))
             }
         }
         return report
@@ -170,6 +200,17 @@ public enum TestLog {
         let name = String(line[marker.upperBound..<separator.lowerBound])
         let message = String(line[separator.upperBound...])
         return (Self.testName(name), TestIssue(file: file, line: number, message: message))
+    }
+
+    /// Tests a passing run's summary (`Test run with 47 tests in 10 suites passed after …`)
+    /// counts beyond the ones whose lines arrived. A failing run's summary can't say which
+    /// outcome the missing ones had, so it adds nothing.
+    private static func missingPasses(summary: String, seen: Int) -> Int {
+        guard summary.contains(SwiftTesting.passed) else { return 0 }
+
+        let afterPrefix = summary.dropFirst(SwiftTesting.runSummary.count)
+        guard let unit = afterPrefix.range(of: SwiftTesting.runTestsUnit), let total = Int(afterPrefix[..<unit.lowerBound]) else { return 0 }
+        return max(0, total - seen)
     }
 
     /// `fails() recorded an issue at File.swift:5:26: Expectation failed: …`

@@ -59,4 +59,8 @@ test "$(plutil -extract CFBundleIdentifier raw "$info")" = com.example.generated
 test "$(plutil -extract CFBundleShortVersionString raw "$info")" = 2.3
 test "$(plutil -extract CFBundleVersion raw "$info")" = 45
 test "$(plutil -extract UIDeviceFamily json -o - "$info")" = "[1,2]"
+
+# The preset accent color is compiled into the app's asset catalog.
+assets="$(dirname "$info")/Assets.car"
+xcrun assetutil --info "$assets" | grep -q '"Name" : "AccentColor"' || { echo "no AccentColor in $assets" >&2; exit 1; }
 echo "generated HelloApp.xcodeproj; resolved with swx, built offline; Info.plist carries the manifest's settings"

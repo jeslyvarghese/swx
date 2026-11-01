@@ -522,6 +522,33 @@ public enum StaticManifestParser {
             static let bundleVersion = "bundleVersion"
             static let deviceFamilies = "supportedDeviceFamilies"
             static let orientations = "supportedInterfaceOrientations"
+            static let accentColor = "accentColor"
+            static let accentColorAssetName = "accentColorAssetName"
+            static let presetColor = "presetColor"
+            static let asset = "asset"
+        }
+
+        /// The accent color, `.some(nil)` when none is given, `nil` when it can't be read.
+        private func accentColor(_ arguments: Arguments) -> Manifest.Product.ApplicationSettings.AccentColor?? {
+            if let name = arguments[ApplicationLabel.accentColorAssetName] {
+                return self.string(name).map { .some(.asset($0)) }
+            }
+            guard let expression = arguments[ApplicationLabel.accentColor] else { return .some(nil) }
+
+            // `.presetColor(.orange)` or `.asset("Name")`.
+            guard let call = expression.as(FunctionCallExprSyntax.self),
+                  let member = call.calledExpression.as(MemberAccessExprSyntax.self)?.declName.baseName.text,
+                  let argument = call.arguments.first?.expression, call.arguments.count == 1 else {
+                return nil
+            }
+            switch member {
+            case ApplicationLabel.presetColor:
+                return self.enumCaseName(argument).map { .some(.preset($0)) }
+            case ApplicationLabel.asset:
+                return self.string(argument).map { .some(.asset($0)) }
+            default:
+                return nil
+            }
         }
 
         /// `.iOSApplication` settings; any given but unreadable setting declines the manifest.
@@ -539,7 +566,8 @@ public enum StaticManifestParser {
                   let displayVersion = text(ApplicationLabel.displayVersion),
                   let bundleVersion = text(ApplicationLabel.bundleVersion),
                   let deviceFamilies = cases(ApplicationLabel.deviceFamilies),
-                  let orientations = cases(ApplicationLabel.orientations) else {
+                  let orientations = cases(ApplicationLabel.orientations),
+                  let accentColor = self.accentColor(arguments) else {
                 return nil
             }
             return Manifest.Product.ApplicationSettings(
@@ -548,7 +576,8 @@ public enum StaticManifestParser {
                 displayVersion: displayVersion,
                 bundleVersion: bundleVersion,
                 deviceFamilies: deviceFamilies,
-                interfaceOrientations: orientations
+                interfaceOrientations: orientations,
+                accentColor: accentColor
             )
         }
 

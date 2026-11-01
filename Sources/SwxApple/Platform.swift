@@ -121,6 +121,11 @@ public struct AppleDestination: Sendable, Hashable, CustomStringConvertible {
         return "platform=\(platform),id=\(deviceIdentifier)"
     }
 
+    /// The SDK this destination builds with: `iphonesimulator`, `watchos`, `macosx`, …
+    public var sdkName: String {
+        self.platform.sdkName(for: self.environment)
+    }
+
     /// `Debug-iphonesimulator`, `Release-iphoneos`, `Debug` (macOS).
     public func productsDirectoryName(configuration: String) -> String {
         guard self.platform != .macOS else {

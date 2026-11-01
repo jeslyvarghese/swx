@@ -267,6 +267,22 @@ enum SerializedManifestDecoder {
         static let bundleVersion = "bundleVersion"
         static let deviceFamilies = "supportedDeviceFamilies"
         static let orientations = "supportedInterfaceOrientations"
+        static let accentColor = "accentColor"
+        static let presetColor = "presetColor"
+        static let asset = "asset"
+        static let rawValue = "rawValue"
+    }
+
+    /// `{"presetColor": {"_0": {"rawValue": "orange"}}}` or `{"asset": {"_0": "Name"}}`.
+    private static func accentColor(_ json: Any?) -> Manifest.Product.ApplicationSettings.AccentColor? {
+        guard let json = json as? [String: Any] else { return nil }
+        if let preset = ((json[ApplicationKey.presetColor] as? [String: Any])?[Key.payload] as? [String: Any])?[ApplicationKey.rawValue] as? String {
+            return .preset(preset)
+        }
+        if let asset = (json[ApplicationKey.asset] as? [String: Any])?[Key.payload] as? String {
+            return .asset(asset)
+        }
+        return nil
     }
 
     /// AppleProductTypes products serialize as executables carrying an `iOSAppInfo` setting.
@@ -288,7 +304,8 @@ enum SerializedManifestDecoder {
                 displayVersion: value(ApplicationKey.displayVersion),
                 bundleVersion: value(ApplicationKey.bundleVersion),
                 deviceFamilies: appInfo[ApplicationKey.deviceFamilies] as? [String] ?? [],
-                interfaceOrientations: orientations
+                interfaceOrientations: orientations,
+                accentColor: Self.accentColor(appInfo[ApplicationKey.accentColor])
             )
             return Manifest.Product(name: name, targets: targets, kind: .application, application: application)
         }
