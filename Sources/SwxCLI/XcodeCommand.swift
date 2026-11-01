@@ -78,8 +78,8 @@ struct XcodeGenerate: AsyncParsableCommand {
         discussion: "Entitlements, Info.plist keys, widget extensions and a watch app are read from swx-xcode.json next to Package.swift when present."
     )
 
-    @Option(name: .customLong("ios-deployment-target"), help: "The iOS deployment target of the generated targets.")
-    var deploymentTarget: String = XcodeProjectGenerator.defaultDeploymentTarget
+    @Option(name: .customLong("ios-deployment-target"), help: "The iOS deployment target of the generated targets (default: the package's iOS platform, else \(XcodeProjectGenerator.defaultDeploymentTarget)).")
+    var deploymentTarget: String?
 
     @OptionGroup var global: GlobalOptions
 

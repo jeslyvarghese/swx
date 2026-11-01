@@ -479,6 +479,14 @@ xcodebuild -clonedSourcePackagesDirPath SourcePackages \
            -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile …</pre>
             <p>When an app outgrows a package, <code>swx xcode generate</code> writes an <code>.xcodeproj</code> for its <code>.iOSApplication</code> products (through XcodeGen, fetched like any swx tool).</p>
             <p>
+                Declare a <code>.library</code> product for the internal targets an app imports, and the project links
+                them as products of the package itself (a local package reference), so Xcode builds them with full
+                SwiftPM semantics: system-library modules (GRDB's SQLite), resources and <code>Bundle.module</code>,
+                plugins. Targets no library product vends are compiled as static libraries in the project, which lacks
+                those. The deployment target follows the package's <code>platforms:</code> (iOS, and watchOS for watch
+                apps) unless <code>--ios-deployment-target</code> says otherwise.
+            </p>
+            <p>
                 What <code>Package.swift</code> can't say goes in an optional <code>swx-xcode.json</code> next to it:
                 entitlements, extra Info.plist keys, a WidgetKit extension (widgets, Live Activities) and a watchOS
                 companion app, each built from SwiftPM targets of the package. <code>swx xcode generate</code> and

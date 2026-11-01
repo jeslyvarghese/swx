@@ -69,10 +69,19 @@ public struct XcodeProjectGenerator: Sendable {
     /// The deployment target of generated targets when none is given.
     public static let defaultDeploymentTarget = "17.0"
 
-    /// Writes `<package>/<Name>.xcodeproj` and returns it.
-    public func generate(deploymentTarget: String) async throws -> URL {
+    /// Writes `<package>/<Name>.xcodeproj` and returns it. Without an explicit deployment target,
+    /// the package's own `platforms:` minimum is used, then the default.
+    public func generate(deploymentTarget explicit: String?) async throws -> URL {
         let manifest = try await self.loadManifest()
-        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: deploymentTarget, paths: .relative, overlay: try self.loadOverlay(manifest))
+        let minimums = self.loadPlatformMinimums()
+        let spec = try Self.spec(
+            for: manifest,
+            packageDirectory: self.packageDirectory,
+            deploymentTarget: Self.iOSDeploymentTarget(explicit: explicit, minimums: minimums),
+            paths: .relative,
+            overlay: try self.loadOverlay(manifest),
+            platforms: minimums
+        )
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: self.packageDirectory, projectDirectory: self.packageDirectory, cache: .none)
     }
 
@@ -82,7 +91,15 @@ public struct XcodeProjectGenerator: Sendable {
     func generatePrivateProject(for product: String, in directory: URL) async throws -> URL? {
         let manifest = try await self.loadManifest()
         guard manifest.products.contains(where: { $0.name == product && $0.kind == .application }) else { return nil }
-        let spec = try Self.spec(for: manifest, packageDirectory: self.packageDirectory, deploymentTarget: Self.defaultDeploymentTarget, paths: .absolute, overlay: try self.loadOverlay(manifest))
+        let minimums = self.loadPlatformMinimums()
+        let spec = try Self.spec(
+            for: manifest,
+            packageDirectory: self.packageDirectory,
+            deploymentTarget: Self.iOSDeploymentTarget(explicit: nil, minimums: minimums),
+            paths: .absolute,
+            overlay: try self.loadOverlay(manifest),
+            platforms: minimums
+        )
         try FileSystem.createDirectory(directory)
         return try await self.runXcodeGen(spec: spec, name: manifest.name, specDirectory: directory, projectDirectory: directory, cache: .useCache)
     }
@@ -92,6 +109,18 @@ public struct XcodeProjectGenerator: Sendable {
         let toolchain = try await Toolchain.detect(store: store)
         let loader = ManifestLoader(store: store, toolchain: toolchain, maximumConcurrency: self.options.maximumConcurrency)
         return try await loader.load(packageAt: self.packageDirectory)
+    }
+
+    /// The manifest's declared OS minimums; none when it can't be read.
+    private func loadPlatformMinimums() -> PlatformMinimums {
+        let file = self.packageDirectory.appendingPathComponent(WellKnownFile.manifest)
+        guard let data = FileSystem.readIfPresent(file) else { return .none }
+        return PlatformMinimums.read(manifestSource: String(decoding: data, as: UTF8.self))
+    }
+
+    /// An explicit target wins, then the package's `platforms:` minimum, then the default.
+    static func iOSDeploymentTarget(explicit: String?, minimums: PlatformMinimums) -> String {
+        explicit ?? minimums.iOS ?? Self.defaultDeploymentTarget
     }
 
     /// `swx-xcode.json` next to the manifest, or no overlay when there is none.
@@ -133,7 +162,8 @@ public struct XcodeProjectGenerator: Sendable {
         packageDirectory: URL,
         deploymentTarget: String,
         paths: SpecPaths = .relative,
-        overlay: XcodeOverlay = .none
+        overlay: XcodeOverlay = .none,
+        platforms: PlatformMinimums = .none
     ) throws -> [String: Any] {
         let applications = manifest.products.filter { $0.kind == .application }
         guard !applications.isEmpty else {
@@ -143,9 +173,10 @@ public struct XcodeProjectGenerator: Sendable {
         var packages: [String: [String: String]] = [:]
         var targets: [String: Any] = [:]
         var libraries = LibraryCollector()
+        let local = LocalProducts(manifest: manifest, packageDirectory: packageDirectory, paths: paths)
         for application in applications {
             // The app's own targets become one application target…
-            let appDependencies = try Self.dependencies(of: application.targets, in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
+            let appDependencies = try Self.dependencies(of: application.targets, in: manifest, packageDirectory: packageDirectory, paths: paths, local: local, packages: &packages)
             var app: [String: Any] = [
                 "type": Spec.applicationType,
                 "platform": Spec.iOS,
@@ -158,7 +189,8 @@ public struct XcodeProjectGenerator: Sendable {
             }
             targets[application.name] = app
 
-            // …and the internal targets it imports become static libraries, keeping their module names.
+            // …and the internal targets it imports become static libraries, keeping their module names
+            // (unless a library product of the package vends them: those link as package products).
             libraries.add(appDependencies.internalTargets, for: .iOS, excluding: application.targets)
         }
 
@@ -166,7 +198,7 @@ public struct XcodeProjectGenerator: Sendable {
         for extra in overlay.targets {
             guard let application = applications.first(where: { $0.name == extra.embedIn }) else { continue }
 
-            let dependencies = try Self.dependencies(of: extra.sources, in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
+            let dependencies = try Self.dependencies(of: extra.sources, in: manifest, packageDirectory: packageDirectory, paths: paths, local: local, packages: &packages)
             targets[extra.name] = try Self.extraTarget(extra, application: application, manifest: manifest, packageDirectory: packageDirectory, paths: paths, dependencies: dependencies.entries)
             libraries.add(dependencies.internalTargets, for: extra.kind.platform, excluding: extra.sources)
         }
@@ -174,7 +206,7 @@ public struct XcodeProjectGenerator: Sendable {
         // Libraries are emitted last: only now is every platform that links them known.
         while let library = libraries.next() {
             let (name, platforms) = library
-            let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, paths: paths, packages: &packages)
+            let dependencies = try Self.dependencies(of: [name], in: manifest, packageDirectory: packageDirectory, paths: paths, local: local, packages: &packages)
             var libraryTarget: [String: Any] = [
                 "type": Spec.libraryType,
                 "sources": try Self.sources([name], packageDirectory: packageDirectory, paths: paths),
@@ -188,7 +220,7 @@ public struct XcodeProjectGenerator: Sendable {
 
         return [
             "name": manifest.name,
-            "options": ["deploymentTarget": Self.deploymentTargets(iOS: deploymentTarget, overlay: overlay)],
+            "options": ["deploymentTarget": Self.deploymentTargets(iOS: deploymentTarget, overlay: overlay, platforms: platforms)],
             "packages": packages,
             "targets": targets,
         ]
@@ -316,13 +348,14 @@ public struct XcodeProjectGenerator: Sendable {
         return ["platform": Overlay.multiplatform, Overlay.supportedDestinations: platforms.sorted().map(\.rawValue)]
     }
 
-    /// The project's deployment targets: iOS as asked, watchOS as low as any watch app needs.
-    private static func deploymentTargets(iOS: String, overlay: XcodeOverlay) -> [String: String] {
+    /// The project's deployment targets: iOS as asked, watchOS as low as any watch app needs
+    /// (its own target, else the package's watchOS minimum, else the default).
+    private static func deploymentTargets(iOS: String, overlay: XcodeOverlay, platforms: PlatformMinimums) -> [String: String] {
         var targets = [Spec.iOS: iOS]
         let watchApps = overlay.targets.filter { $0.kind == .watchApp }
         guard !watchApps.isEmpty else { return targets }
 
-        let watchVersions = watchApps.map { $0.deploymentTarget ?? Overlay.defaultWatchDeploymentTarget }
+        let watchVersions = watchApps.map { $0.deploymentTarget ?? platforms.watchOS ?? Overlay.defaultWatchDeploymentTarget }
         targets[TargetPlatform.watchOS.rawValue] = watchVersions.min { Self.versionComponents($0).lexicographicallyPrecedes(Self.versionComponents($1)) }
         return targets
     }
@@ -367,6 +400,46 @@ public struct XcodeProjectGenerator: Sendable {
         }
     }
 
+    /// The package's own library products. Xcode builds a target it links through one with full
+    /// SwiftPM semantics (system-library modules, resources and `Bundle.module`, plugins), which a
+    /// translated static library lacks.
+    struct LocalProducts {
+        /// The package's key in the spec's `packages`: its manifest name.
+        let packageKey: String
+        let packageEntry: [String: String]
+        private let productByTarget: [String: String]
+
+        /// The current directory, as XcodeGen resolves a relative package path (the spec's own).
+        private static let currentDirectory = "."
+
+        init(manifest: Manifest, packageDirectory: URL, paths: SpecPaths) {
+            self.packageKey = manifest.name
+            switch paths {
+            case .relative:
+                self.packageEntry = ["path": Self.currentDirectory]
+            case .absolute:
+                self.packageEntry = ["path": packageDirectory.standardizedFileURL.path]
+            }
+
+            // Each target links through the narrowest library product that vends it (fewest
+            // targets, then name, so the choice is stable).
+            let libraries = manifest.products
+                .filter { $0.kind == .library }
+                .sorted { ($0.targets.count, $0.name) < ($1.targets.count, $1.name) }
+            var productByTarget: [String: String] = [:]
+            for product in libraries {
+                for target in product.targets where productByTarget[target] == nil {
+                    productByTarget[target] = product.name
+                }
+            }
+            self.productByTarget = productByTarget
+        }
+
+        func product(for target: String) -> String? {
+            self.productByTarget[target]
+        }
+    }
+
     /// Sources must live in the default `Sources/<target>` layout.
     private static func sources(_ targets: [String], packageDirectory: URL, paths: SpecPaths) throws -> [[String: String]] {
         try targets.map { target in
@@ -389,11 +462,25 @@ public struct XcodeProjectGenerator: Sendable {
         in manifest: Manifest,
         packageDirectory: URL,
         paths: SpecPaths,
+        local: LocalProducts,
         packages: inout [String: [String: String]]
     ) throws -> (entries: [[String: String]], internalTargets: [String]) {
         let targetNames = Set(manifest.targets.map(\.name))
         var entries: [[String: String]] = []
         var internalTargets: [String] = []
+
+        // An internal target a library product vends links as that product; the rest are translated.
+        func addInternal(_ name: String) {
+            guard let product = local.product(for: name), !targets.contains(name) else {
+                internalTargets.append(name)
+                return
+            }
+            packages[local.packageKey] = local.packageEntry
+            let entry = ["package": local.packageKey, "product": product]
+            if !entries.contains(entry) {
+                entries.append(entry)
+            }
+        }
 
         func addProduct(_ product: String, package packageName: String) throws {
             let (key, package) = try Self.package(named: packageName, in: manifest, packageDirectory: packageDirectory, paths: paths)
@@ -411,9 +498,9 @@ public struct XcodeProjectGenerator: Sendable {
             for dependency in target.dependencies {
                 switch dependency {
                 case .target(let name, _):
-                    internalTargets.append(name)
+                    addInternal(name)
                 case .byName(let name, _) where targetNames.contains(name):
-                    internalTargets.append(name)
+                    addInternal(name)
                 case .byName(let name, _), .product(let name, nil, _):
                     // A product named like its package (`.byName("Alamofire")`).
                     try addProduct(name, package: name)

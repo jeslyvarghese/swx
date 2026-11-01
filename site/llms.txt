@@ -36,6 +36,9 @@ Entitlements, Info.plist keys, a widget extension or a watch app go in `swx-xcod
 Package.swift (`applications.<App>.entitlements|infoPlist`; `targets.<Name>` with `kind`
 widgetExtension|watchApp, `sources` (SwiftPM targets), `bundleIdentifier`, `embedIn`). Builds and
 `swx xcode generate` read it; mistakes fail with code `invalid-xcode-overlay` naming the key.
+Give the internal targets an app imports `.library` products: the generated project then links them
+as local package products (system-library modules like GRDB's, resources, `Bundle.module` work);
+targets without one become static libraries. Deployment targets follow the package's `platforms:`.
 
 Iterate on UI with hot reload; it needs no project changes:
 
