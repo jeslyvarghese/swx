@@ -62,13 +62,27 @@ extension DeviceRunner {
         #endif
     }
 
-    /// Installs and launches an app on a simulator without attaching to its console; returns
-    /// once it is running.
+    /// Installs and launches an app on a simulator or device without attaching to its console;
+    /// returns once it is running.
     public static func launchInBackground(app: URL, bundleIdentifier: String, on target: RunTarget, arguments: [String]) async throws {
-        guard target.environment == .simulator else {
-            throw DeviceError(description: "\(target.name) is a device; this launches on simulators")
+        switch target.environment {
+        case .simulator:
+            try await Self.bootAndInstall(app: app, on: target)
+            try await ProcessRunner.run([Tool.xcrun, "simctl", "launch", "--terminate-running-process", target.identifier, bundleIdentifier] + arguments)
+
+        case .device:
+            // Without `--console`, devicectl returns as soon as the app is running.
+            for command in Self.deviceBackgroundCommands(app: app, bundleIdentifier: bundleIdentifier, device: target.identifier, arguments: arguments) {
+                try await ProcessRunner.run(command)
+            }
         }
-        try await Self.bootAndInstall(app: app, on: target)
-        try await ProcessRunner.run([Tool.xcrun, "simctl", "launch", "--terminate-running-process", target.identifier, bundleIdentifier] + arguments)
+    }
+
+    /// The devicectl commands that install and launch an app on a device, detached (pure).
+    static func deviceBackgroundCommands(app: URL, bundleIdentifier: String, device: String, arguments: [String]) -> [[String]] {
+        [
+            [Tool.xcrun, "devicectl", "device", "install", "app", "--device", device, app.path],
+            [Tool.xcrun, "devicectl", "device", "process", "launch", "--terminate-existing", "--device", device, bundleIdentifier] + arguments,
+        ]
     }
 }
