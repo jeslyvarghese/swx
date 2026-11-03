@@ -103,6 +103,12 @@ extension XcodeOverlay {
         static let target: Set<String> = [kind, sources, bundleIdentifier, embedIn, deploymentTarget, entitlements, infoPlist]
     }
 
+    /// `NSNumber.objCType` codes: JSONSerialization stores booleans as `char`.
+    private enum NumberTypeCode {
+        static let bool = "c"
+        static let floatingPoint: Set<String> = ["f", "d"]
+    }
+
     private static let bundleIdentifierSeparator = "."
     private static let versionComponentSeparator: Character = "."
 
@@ -288,9 +294,11 @@ extension XcodeOverlay {
     private static func plistValue(_ value: Any, at path: [String]) throws -> PlistValue {
         switch value {
         case let number as NSNumber:
-            // JSON booleans arrive as NSNumber too; tell them apart before numbers.
-            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
-            if CFNumberIsFloatType(number) { return .real(number.doubleValue) }
+            // JSON booleans arrive as NSNumber too; their type code (on Darwin and Linux alike)
+            // tells them apart from numbers.
+            let typeCode = String(cString: number.objCType)
+            if typeCode == NumberTypeCode.bool { return .bool(number.boolValue) }
+            if NumberTypeCode.floatingPoint.contains(typeCode) { return .real(number.doubleValue) }
             return .integer(number.intValue)
         case let string as String:
             return .string(string)
